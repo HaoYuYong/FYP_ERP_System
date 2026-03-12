@@ -156,9 +156,9 @@ const TestUsers: React.FC = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Role
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Auth ID
-                  </th>
+                  </th> */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Created
                   </th>
@@ -210,11 +210,11 @@ const TestUsers: React.FC = () => {
                       </td>
 
                       {/* Auth ID (UUID) – truncated for readability, full UUID on hover */}
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      {/* <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-gray-500 font-mono text-xs truncate max-w-[120px]" title={user.auth_id}>
                           {user.auth_id ? `${user.auth_id.substring(0, 8)}...` : 'N/A'}
                         </div>
-                      </td>
+                      </td> */}
 
                       {/* Creation date – formatted nicely */}
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
