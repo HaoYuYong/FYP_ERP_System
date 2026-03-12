@@ -2,6 +2,8 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import AdminHome from './pages/AdminHome';
+import ManagerHome from './pages/ManagerHome';
+import StaffHome from './pages/StaffHome';
 import RegisterPage from './pages/RegisterPage';
 import TestUsers from './pages/TestUsers';
 
@@ -37,7 +39,7 @@ function App() {
     // Dashboard - Main admin page
     { 
       name: 'Dashboard', 
-      href: '/', 
+      href: '/adminhome', 
       icon: HomeIcon
     },
     
@@ -105,7 +107,9 @@ function App() {
            * ROUTE: DASHBOARD (/)
            * Main admin dashboard - shown when user visits root URL
            */}
-          <Route path="/" element={<AdminHome />} />
+          <Route path="/adminhome" element={<AdminHome />} />
+          <Route path="/managerhome" element={<ManagerHome />} />
+          <Route path="/staffhome" element={<StaffHome />} />
           
           {/**
            * ROUTE: REGISTER PAGE (/register)
