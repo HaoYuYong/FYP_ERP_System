@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom'; // <-- Added import for navigation
 import { supabase } from '../lib/supabase';
 
 // ==============================================
@@ -106,7 +107,19 @@ const TestUsers: React.FC = () => {
   // ==============================================
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Registered Users</h1>
+      {/* Header with title and Register button */}
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Registered Users</h1>
+        <Link
+          to="/register"
+          className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700 transition-colors flex items-center"
+        >
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Register New User
+        </Link>
+      </div>
 
       {/* Error display */}
       {error && (

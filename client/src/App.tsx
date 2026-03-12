@@ -6,7 +6,7 @@ import ManagerHome from './pages/ManagerHome';
 import StaffHome from './pages/StaffHome';
 import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
-import TestUsers from './pages/TestUsers';
+import TestUsers from './pages/UserManaging';
 
 // ==============================================
 // ICON COMPONENT IMPORTS
@@ -52,13 +52,6 @@ function App() {
       name: 'Dashboard', 
       href: '/dashboard',    // Updated from '/adminhome' to generic dashboard
       icon: HomeIcon
-    },
-    
-    // Register User - Admin function to create new accounts
-    { 
-      name: 'Register User', 
-      href: '/register', 
-      icon: UserAddIcon 
     },
     
     // User Management - View all registered users

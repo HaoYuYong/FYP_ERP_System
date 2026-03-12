@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom'; // <-- Added Link import
 import { registerUser } from '../lib/supabase';
 import { RegisterFormData, AuthResponse } from '../types';
 
@@ -90,11 +90,23 @@ const RegisterPage: React.FC = () => {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Register New User</h1>
-        <p className="text-gray-600 mt-2">
-          Create accounts for admin, manager, or staff members.
-        </p>
+      {/* Header with back button and title */}
+      <div className="flex items-center mb-6">
+        <Link
+          to="/users"
+          className="mr-4 text-gray-600 hover:text-gray-900 transition-colors"
+          title="Back to User Management"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+        </Link>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Register New User</h1>
+          <p className="text-gray-600 mt-2">
+            Create accounts for admin, manager, or staff members.
+          </p>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow p-6">
