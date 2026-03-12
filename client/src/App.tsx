@@ -5,6 +5,7 @@ import AdminHome from './pages/AdminHome';
 import ManagerHome from './pages/ManagerHome';
 import StaffHome from './pages/StaffHome';
 import RegisterPage from './pages/RegisterPage';
+import LoginPage from './pages/LoginPage';
 import TestUsers from './pages/TestUsers';
 
 // ==============================================
@@ -26,20 +27,30 @@ import {
 import { NavigationItem } from './types';
 
 /**
+ * Reusable placeholder component for pages under development
+ */
+const Placeholder: React.FC<{ title: string }> = ({ title }) => (
+  <div className="p-6">
+    <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+    <p className="text-gray-600 mt-2">This page is under development.</p>
+  </div>
+);
+
+/**
  * MAIN APP COMPONENT
  * This is the root component that renders everything
  */
 function App() {
   // ==============================================
-  // NAVIGATION ITEMS CONFIGURATION (FIXED - NO DUPLICATES)
+  // NAVIGATION ITEMS CONFIGURATION
   // ==============================================
   // Array defining all items in the sidebar navigation
   // Each item has: name, URL path, and icon component
   const navigationItems: NavigationItem[] = [
-    // Dashboard - Main admin page
+    // Dashboard - Will redirect based on role (handled by protected routes)
     { 
       name: 'Dashboard', 
-      href: '/adminhome', 
+      href: '/dashboard',    // Updated from '/adminhome' to generic dashboard
       icon: HomeIcon
     },
     
@@ -51,7 +62,6 @@ function App() {
     },
     
     // User Management - View all registered users
-    // Note: We're using "User Management" instead of "View Users" for consistency
     { 
       name: 'User Management', 
       href: '/users', 
@@ -87,90 +97,56 @@ function App() {
     /**
      * ROUTER COMPONENT
      * Wraps the entire app to enable client-side routing
-     * - Manages browser history
-     * - Handles URL changes without page reloads
      */
     <Router>
       {/**
-       * LAYOUT COMPONENT
-       * Provides consistent page structure (sidebar + main content)
-       * Passes navigationItems to Sidebar component
+       * ROUTES CONFIGURATION
+       * Public routes (no layout) are defined first,
+       * then protected routes (with Layout) are grouped under '/*'
        */}
-      <Layout navigationItems={navigationItems}>
-        {/**
-         * ROUTES COMPONENT
-         * Container for all route definitions
-         * Matches URL path to specific components
-         */}
-        <Routes>
-          {/**
-           * ROUTE: DASHBOARD (/)
-           * Main admin dashboard - shown when user visits root URL
-           */}
-          <Route path="/adminhome" element={<AdminHome />} />
-          <Route path="/managerhome" element={<ManagerHome />} />
-          <Route path="/staffhome" element={<StaffHome />} />
-          
-          {/**
-           * ROUTE: REGISTER PAGE (/register)
-           * Form for admins to register new users
-           */}
-          <Route path="/register" element={<RegisterPage />} />
-          
-          {/**
-           * ROUTE: USER MANAGEMENT (/users)
-           * Page to view all registered users (for testing/verification)
-           */}
-          <Route path="/users" element={<TestUsers />} />
-          
-          {/**
-           * ROUTE: INVENTORY (/inventory)
-           * Placeholder page for inventory management (coming soon)
-           */}
-          <Route path="/inventory" element={
-            <div className="p-6">
-              <h1 className="text-2xl font-bold text-gray-900">Inventory Management</h1>
-              <p className="text-gray-600 mt-2">This page is under development.</p>
-            </div>
-          } />
-          
-          {/**
-           * ROUTE: ANALYTICS (/analytics)
-           * Placeholder page for analytics and reports (coming soon)
-           */}
-          <Route path="/analytics" element={
-            <div className="p-6">
-              <h1 className="text-2xl font-bold text-gray-900">Analytics & Reports</h1>
-              <p className="text-gray-600 mt-2">This page is under development.</p>
-            </div>
-          } />
-          
-          {/**
-           * ROUTE: SETTINGS (/settings)
-           * Placeholder page for system settings (coming soon)
-           */}
-          <Route path="/settings" element={
-            <div className="p-6">
-              <h1 className="text-2xl font-bold text-gray-900">System Settings</h1>
-              <p className="text-gray-600 mt-2">This page is under development.</p>
-            </div>
-          } />
-          
-          {/**
-           * CATCH-ALL ROUTE (*)
-           * Shows a "Coming Soon" message for any other URLs
-           * This prevents 404 errors during development
-           */}
-          <Route path="*" element={
-            <div className="p-6">
-              <h1 className="text-2xl font-bold text-gray-900">Page Coming Soon</h1>
-              <p className="text-gray-600 mt-2">
-                This page is under development. Check back later!
-              </p>
-            </div>
-          } />
-        </Routes>
-      </Layout>
+      <Routes>
+        {/* PUBLIC ROUTE: LOGIN PAGE (NO SIDEBAR) */}
+        <Route path="/" element={<LoginPage />} />
+
+        {/* PROTECTED ROUTES: ALL PAGES THAT REQUIRE AUTHENTICATION AND SIDEBAR */}
+        <Route
+          path="/*"
+          element={
+            /**
+             * LAYOUT COMPONENT
+             * Provides consistent page structure (sidebar + main content)
+             * Only rendered for routes under this wildcard
+             */
+            <Layout navigationItems={navigationItems}>
+              {/**
+               * NESTED ROUTES
+               * These are rendered inside the Layout's main content area
+               */}
+              <Routes>
+                {/* Role-specific home pages */}
+                <Route path="/admin" element={<AdminHome />} />
+                <Route path="/manager" element={<ManagerHome />} />
+                <Route path="/staff" element={<StaffHome />} />
+                
+                {/* Other protected pages */}
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/users" element={<TestUsers />} />
+                
+                {/* Placeholder pages for future features */}
+                <Route path="/inventory" element={<Placeholder title="Inventory Management" />} />
+                <Route path="/analytics" element={<Placeholder title="Analytics & Reports" />} />
+                <Route path="/settings" element={<Placeholder title="System Settings" />} />
+                
+                {/* Dashboard redirect - temporary: sends to admin page (will be replaced by role-based redirect later) */}
+                <Route path="/dashboard" element={<AdminHome />} />
+                
+                {/* CATCH-ALL ROUTE for any undefined paths under protected section */}
+                <Route path="*" element={<Placeholder title="Page Coming Soon" />} />
+              </Routes>
+            </Layout>
+          }
+        />
+      </Routes>
     </Router>
   );
 }
