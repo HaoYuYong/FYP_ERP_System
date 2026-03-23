@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom'; // <-- Added import for navigation
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 // ==============================================
@@ -26,21 +26,20 @@ interface User {
   last_name: string;
   display_id: string;
   role_id: number;
-  created_at: string;
-  updated_at: string;
   role?: Role;              // Joined role info (present after the query)
+  log_id?: number;          // Optional, not displayed in this simple view
 }
 
 /**
- * TestUsers Component
+ * UserManaging Component
  *
  * Purpose:
  * - Fetches and displays a list of all registered users.
- * - Shows each user's display_id, name, email, role, auth_id (truncated), and creation date.
+ * - Shows each user's display_id, name, email, role, and auth_id (truncated).
  * - Includes a loading spinner and error handling.
  * - Demonstrates how to query the users table with a join to the role table.
  */
-const TestUsers: React.FC = () => {
+const UserManaging: React.FC = () => {
   // State variables
   const [users, setUsers] = useState<User[]>([]);     // List of users
   const [loading, setLoading] = useState(true);       // Loading indicator
@@ -69,15 +68,13 @@ const TestUsers: React.FC = () => {
           last_name,
           display_id,
           role_id,
-          created_at,
-          updated_at,
           role:role_id (
             role_id,
             role_type,
             role_code
           )
         `)
-        .order('created_at', { ascending: false });   // Newest first
+        .order('display_id', { ascending: true });   // Sort by display_id for consistency
 
       if (error) throw error;
 
@@ -156,12 +153,10 @@ const TestUsers: React.FC = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Role
                   </th>
+                  {/* Auth ID column hidden by default – uncomment if needed */}
                   {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Auth ID
                   </th> */}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Created
-                  </th>
                 </tr>
               </thead>
 
@@ -169,7 +164,7 @@ const TestUsers: React.FC = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {users.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
                       <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5 0a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
                       </svg>
@@ -210,20 +205,12 @@ const TestUsers: React.FC = () => {
                       </td>
 
                       {/* Auth ID (UUID) – truncated for readability, full UUID on hover */}
+                      {/* Uncomment if needed */}
                       {/* <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-gray-500 font-mono text-xs truncate max-w-[120px]" title={user.auth_id}>
                           {user.auth_id ? `${user.auth_id.substring(0, 8)}...` : 'N/A'}
                         </div>
                       </td> */}
-
-                      {/* Creation date – formatted nicely */}
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {new Date(user.created_at).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                        })}
-                      </td>
                     </tr>
                   ))
                 )}
@@ -265,6 +252,7 @@ const TestUsers: React.FC = () => {
                 <li>Automatically added to the <code className="bg-blue-100 px-1 rounded">public.users</code> table via database trigger</li>
                 <li>Each user gets a <code className="bg-blue-100 px-1 rounded">display_id</code> (e.g., <strong>A0012</strong>) generated from a role‑based sequence</li>
                 <li>Roles are stored in a separate <code className="bg-blue-100 px-1 rounded">role</code> table and linked via <code className="bg-blue-100 px-1 rounded">role_id</code></li>
+                <li>Audit information (creation/update timestamps) is now stored in a central <code className="bg-blue-100 px-1 rounded">log</code> table, so <code className="bg-blue-100 px-1 rounded">created_at</code> and <code className="bg-blue-100 px-1 rounded">updated_at</code> are no longer part of the <code className="bg-blue-100 px-1 rounded">users</code> table.</li>
               </ul>
             </div>
           </div>
@@ -274,4 +262,4 @@ const TestUsers: React.FC = () => {
   );
 };
 
-export default TestUsers;
+export default UserManaging;

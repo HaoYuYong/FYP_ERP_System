@@ -51,8 +51,7 @@ export interface UserProfile {
   last_name: string;
   display_id: string;           // Auto‑generated identifier, e.g., "A0012"
   role_id: number;              // Foreign key to the role table
-  created_at: string;
-  updated_at: string;
+  log_id?: number;              // Optional reference to creation log entry
   role?: Role;                  // Joined role data (optional, only present when we ask for it)
 }
 
@@ -62,13 +61,30 @@ export type AuthError = {
 }
 
 // ==============================================
+// HELPER: Map role type to role code
+// ==============================================
+const getRoleCode = (role: 'admin' | 'manager' | 'staff'): 'A' | 'M' | 'S' => {
+  const roleMap = {
+    admin: 'A' as const,
+    manager: 'M' as const,
+    staff: 'S' as const,
+  }
+  return roleMap[role] || 'S'
+}
+
+// ==============================================
 // REGISTER USER
 // ==============================================
 /**
- * Registers a new user using Supabase Auth.
- * The user's metadata (first_name, last_name, role) is stored in auth.users.
- * A database trigger will later copy the data into the public.users table
- * and generate a display_id.
+ * Registers a new user using Supabase Auth + manual user table insertion.
+ * 
+ * Steps:
+ * 1. Call Supabase Auth signUp to create the auth user
+ * 2. After successful auth, call insert_user() function to create the user in users table
+ * 3. The user record includes the auto-generated display_id
+ * 
+ * This approach is more reliable than using triggers, which don't always fire
+ * properly with Supabase Auth in the auth schema.
  */
 export const registerUser = async (
   email: string,
@@ -78,12 +94,12 @@ export const registerUser = async (
   role: 'admin' | 'manager' | 'staff'
 ) => {
   try {
-    // Call Supabase Auth signUp method
+    // Step 1: Create the auth user
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: {    // Custom metadata stored in auth.users.raw_user_meta_data
+        data: {
           first_name: firstName,
           last_name: lastName,
           role: role,
@@ -93,24 +109,61 @@ export const registerUser = async (
 
     if (authError) throw authError
 
-    if (authData.user) {
-      console.log('User registered in Auth:', authData.user.id)
+    if (!authData.user) {
       return {
-        success: true,
-        message: 'User registered successfully! Please check your email to verify your account.',
-        user: authData.user
+        success: false,
+        message: 'Failed to create authentication user'
       }
     }
 
+    // Step 2: Create the user record in the users table using the insert_user function
+    const roleCode = getRoleCode(role)
+    const { data: insertResult, error: insertError } = await supabase
+      .rpc('insert_user', {
+        p_auth_id: authData.user.id,
+        p_email: email,
+        p_first_name: firstName,
+        p_last_name: lastName,
+        p_role_code: roleCode
+      })
+
+    if (insertError) {
+      console.error('Failed to insert user record:', insertError)
+      throw new Error(`Database insert failed: ${insertError.message}`)
+    }
+
+    // Check if the RPC call returned a result
+    if (!insertResult || insertResult.length === 0) {
+      throw new Error('Function returned no result')
+    }
+
+    const result = insertResult[0]
+
+    if (!result.success) {
+      throw new Error(result.message || 'Unknown database error')
+    }
+
+    console.log('User created successfully:', {
+      auth_id: result.user_id,
+      display_id: result.display_id,
+      email: email
+    })
+
     return {
-      success: false,
-      message: 'Registration failed'
+      success: true,
+      message: 'User registered successfully! User record created in database. Please check your email to verify your account.',
+      user: {
+        id: authData.user.id,
+        email: email,
+        display_id: result.display_id,
+        role: role
+      }
     }
   } catch (error: any) {
     console.error('Registration error:', error)
     return {
       success: false,
-      message: error.message || 'Registration failed'
+      message: error.message || 'Registration failed. Please try again.'
     }
   }
 }
@@ -138,6 +191,7 @@ export const getCurrentUserProfile = async (): Promise<UserProfile | null> => {
 
     // 2. Query the users table, joining the role table via role_id
     // 'role:role_id' - This tells Supabase to join the role table using role_id
+    // Note: We no longer select created_at/updated_at.
     const { data, error } = await supabase
       .from('users')
       .select(`
@@ -147,8 +201,7 @@ export const getCurrentUserProfile = async (): Promise<UserProfile | null> => {
         last_name,
         display_id,
         role_id,
-        created_at,
-        updated_at,
+        log_id,
         role:role_id (
           role_id,
           role_type,

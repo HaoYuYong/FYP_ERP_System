@@ -16,7 +16,7 @@
  * - display_id: auto‑generated identifier like "A0012"
  * - role_id: foreign key to the role table
  * - role?: optional joined role object (used when we query with a join)
- * - created_at / updated_at: timestamps
+ * - log_id: optional reference to the creation log entry (not typically displayed)
  */
 export interface User {
   auth_id: string;               // UUID from Supabase Auth (primary key)
@@ -26,8 +26,7 @@ export interface User {
   display_id: string;             // e.g., "A0012", "M0045"
   role_id: number;
   role?: Role;                    // Joined role info (optional)
-  created_at: string;
-  updated_at: string;
+  log_id?: number;                // Optional, points to creation log entry
 }
 
 // ==============================================

@@ -6,7 +6,7 @@ import ManagerHome from './pages/ManagerHome';
 import StaffHome from './pages/StaffHome';
 import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
-import TestUsers from './pages/UserManaging';
+import UserManaging from './pages/UserManaging';
 
 // ==============================================
 // ICON COMPONENT IMPORTS
@@ -123,7 +123,7 @@ function App() {
                 
                 {/* Other protected pages */}
                 <Route path="/register" element={<RegisterPage />} />
-                <Route path="/users" element={<TestUsers />} />
+                <Route path="/users" element={<UserManaging />} />
                 
                 {/* Placeholder pages for future features */}
                 <Route path="/inventory" element={<Placeholder title="Inventory Management" />} />
