@@ -8,6 +8,8 @@ import RegisterPage from './pages/RegisterPage';
 import LoginPage from './pages/LoginPage';
 import UserManaging from './pages/UserManaging';
 import InventoryPage from './pages/InventoryPage';
+import SupplierPage from './pages/SupplierPage';
+import CustomerPage from './pages/CustomerPage';
 
 // ==============================================
 // ICON COMPONENT IMPORTS
@@ -62,11 +64,25 @@ function App() {
       icon: UsersIcon 
     },
     
-    // Inventory - Product and stock management (placeholder - not yet implemented)
+    // Inventory - Product and stock management
     { 
       name: 'Inventory', 
       href: '/inventory', 
       icon: PackageIcon 
+    },
+
+    // Suppliers - Manage supplier information
+    { 
+      name: 'Suppliers', 
+      href: '/suppliers', 
+      icon: PackageIcon 
+    },
+
+    // Customers - Manage customer information
+    { 
+      name: 'Customers', 
+      href: '/customers', 
+      icon: UsersIcon 
     },
     
     // Analytics - Reports and charts (placeholder - not yet implemented)
@@ -126,6 +142,8 @@ function App() {
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/users" element={<UserManaging />} />
                 <Route path="/inventory" element={<InventoryPage />} />
+                <Route path="/suppliers" element={<SupplierPage />} />
+                <Route path="/customers" element={<CustomerPage />} />
                 
                 {/* Placeholder pages for future features */}
                 <Route path="/inventory" element={<Placeholder title="Inventory Management" />} />
