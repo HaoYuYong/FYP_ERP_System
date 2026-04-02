@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
+import ConfirmationDialog from '../components/ui/ConfirmationDialog'; // Import custom confirmation dialog
 import { PlusIcon, ItemIcon, CIcon } from '../components/ui/Icons';
 
 // ==============================================
@@ -54,6 +55,11 @@ const InventoryPage: React.FC = () => {
   });
   const [submittingClass, setSubmittingClass] = useState(false);
 
+  // Confirmation dialog state for item addition
+  const [showItemConfirm, setShowItemConfirm] = useState(false);
+  // Confirmation dialog state for classification addition
+  const [showClassConfirm, setShowClassConfirm] = useState(false);
+
   // ==============================================
   // FETCH INVENTORY ITEMS
   // ==============================================
@@ -92,7 +98,7 @@ const InventoryPage: React.FC = () => {
   // ==============================================
   /**
    * handleAddItem – validates form, inserts new item into inventory table,
-   * refreshes the list, and prompts the user to stay or exit.
+   * refreshes the list, and shows custom confirmation dialog.
    */
   const handleAddItem = async () => {
     // Validate required field
@@ -123,24 +129,28 @@ const InventoryPage: React.FC = () => {
       // Refresh the table with updated data
       await fetchItems();
 
-      // Ask user whether to stay on form or return to list
-      const stay = window.confirm(
-        'Item added successfully!\n\nClick OK to add another item, or Cancel to return to inventory list.'
-      );
-
-      if (stay) {
-        // Reset form and keep modal open
-        setItemFormData({ item_name: '', serial_number: '', balance_qty: '', uom: '' });
-      } else {
-        // Close modal and return to main page
-        setShowItemModal(false);
-      }
+      // Show custom confirmation instead of window.confirm
+      setShowItemConfirm(true);
     } catch (err: any) {
       setError(err.message);
       console.error('Error adding item:', err);
     } finally {
       setSubmittingItem(false);
     }
+  };
+
+  // Called when user clicks "OK" on the item confirmation
+  const handleItemConfirmOk = () => {
+    setShowItemConfirm(false);
+    // Stay: reset form and keep modal open
+    setItemFormData({ item_name: '', serial_number: '', balance_qty: '', uom: '' });
+  };
+
+  // Called when user clicks "Cancel" on the item confirmation
+  const handleItemConfirmCancel = () => {
+    setShowItemConfirm(false);
+    // Exit: close the item modal
+    setShowItemModal(false);
   };
 
   // ==============================================
@@ -176,22 +186,28 @@ const InventoryPage: React.FC = () => {
 
       if (insertError) throw insertError;
 
-      // Inform user and decide to stay or close
-      const stay = window.confirm(
-        'Classification added successfully!\n\nClick OK to add another classification, or Cancel to return.'
-      );
-
-      if (stay) {
-        setClassFormData({ classification_code: '', classification_title: '', classification_description: '' });
-      } else {
-        setShowClassModal(false);
-      }
+      // Show custom confirmation
+      setShowClassConfirm(true);
     } catch (err: any) {
       setError(err.message);
       console.error('Error adding classification:', err);
     } finally {
       setSubmittingClass(false);
     }
+  };
+
+  // Called when user clicks "OK" on the classification confirmation
+  const handleClassConfirmOk = () => {
+    setShowClassConfirm(false);
+    // Stay: reset form and keep modal open
+    setClassFormData({ classification_code: '', classification_title: '', classification_description: '' });
+  };
+
+  // Called when user clicks "Cancel" on the classification confirmation
+  const handleClassConfirmCancel = () => {
+    setShowClassConfirm(false);
+    // Exit: close the classification modal
+    setShowClassModal(false);
   };
 
   // ==============================================
@@ -257,7 +273,7 @@ const InventoryPage: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       UOM
                     </th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {items.length === 0 ? (
@@ -529,6 +545,23 @@ const InventoryPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ============================================== */}
+      {/* CONFIRMATION DIALOGS                           */}
+      {/* ============================================== */}
+      <ConfirmationDialog
+        isOpen={showItemConfirm}
+        message="Click **OK** to add another item, or **Cancel** to return to inventory list."
+        onConfirm={handleItemConfirmOk}
+        onCancel={handleItemConfirmCancel}
+      />
+
+      <ConfirmationDialog
+        isOpen={showClassConfirm}
+        message="Click **OK** to add another classification, or **Cancel** to return to inventory list."
+        onConfirm={handleClassConfirmOk}
+        onCancel={handleClassConfirmCancel}
+      />
     </div>
   );
 };

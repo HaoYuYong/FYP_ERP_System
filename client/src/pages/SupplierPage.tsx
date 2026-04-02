@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
-import { PlusIcon, PackageIcon } from '../components/ui/Icons'; // Using PackageIcon for supplier
+import ConfirmationDialog from '../components/ui/ConfirmationDialog';
+import { PlusIcon, PackageIcon } from '../components/ui/Icons';
 
 // ==============================================
 // TYPE DEFINITIONS
@@ -38,6 +39,9 @@ const SupplierPage: React.FC = () => {
     register_no_new: ''
   });
   const [submitting, setSubmitting] = useState(false);
+
+  // Confirmation dialog state
+  const [showConfirm, setShowConfirm] = useState(false);
 
   // ==============================================
   // FETCH SUPPLIERS
@@ -98,22 +102,28 @@ const SupplierPage: React.FC = () => {
 
       await fetchSuppliers(); // Refresh the list
 
-      // Ask user whether to stay or return
-      const stay = window.confirm(
-        'Supplier added successfully!\n\nClick OK to add another, or Cancel to return to supplier list.'
-      );
-
-      if (stay) {
-        setFormData({ company_name: '', industry_name: '', industry_code: '', register_no_new: '' });
-      } else {
-        setShowModal(false);
-      }
+      // Show custom confirmation instead of window.confirm
+      setShowConfirm(true);
     } catch (err: any) {
       setError(err.message);
       console.error('Error adding supplier:', err);
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // Called when user clicks "OK" on the confirmation
+  const handleConfirmOk = () => {
+    setShowConfirm(false);
+    // Stay: reset form and keep modal open
+    setFormData({ company_name: '', industry_name: '', industry_code: '', register_no_new: '' });
+  };
+
+  // Called when user clicks "Cancel" on the confirmation
+  const handleConfirmCancel = () => {
+    setShowConfirm(false);
+    // Exit: close the modal
+    setShowModal(false);
   };
 
   // Cancel modal and reset form
@@ -335,6 +345,16 @@ const SupplierPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ============================================== */}
+      {/* CONFIRMATION DIALOG                            */}
+      {/* ============================================== */}
+      <ConfirmationDialog
+        isOpen={showConfirm}
+        message="Click **OK** to add another supplier, or **Cancel** to return to supplier list."
+        onConfirm={handleConfirmOk}
+        onCancel={handleConfirmCancel}
+      />
     </div>
   );
 };
