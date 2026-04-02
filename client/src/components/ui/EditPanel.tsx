@@ -32,22 +32,27 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // STATE
   // ==============================================
 
-  // Current active tab (for inventory only)
-  const [activeTab, setActiveTab] = useState<'main' | 'quantity' | 'classification'>('main');
+  // Current active tab (different sets for inventory vs customer/supplier)
+  const [activeTab, setActiveTab] = useState<'main' | 'quantity' | 'classification' | 'bank' | 'contact' | 'tax' | 'liabilities'>('main');
 
   // Form data for main fields (inventory/customer/supplier)
   const [mainData, setMainData] = useState<any>({});
 
-  // Quantity data (for inventory)
+  // Inventory-specific states
   const [quantityData, setQuantityData] = useState<any>({});
   const [loadingQuantity, setLoadingQuantity] = useState(false);
-
-  // Classification data (for inventory)
   const [classifications, setClassifications] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [selectedClassTitle, setSelectedClassTitle] = useState('');
   const [selectedClassDesc, setSelectedClassDesc] = useState('');
   const [loadingClasses, setLoadingClasses] = useState(false);
+
+  // Customer/Supplier related data
+  const [bankData, setBankData] = useState<any>(null);
+  const [contactData, setContactData] = useState<any>(null);
+  const [taxData, setTaxData] = useState<any>(null);
+  const [liabilitiesData, setLiabilitiesData] = useState<any>(null);
+  const [loadingRelated, setLoadingRelated] = useState(false);
 
   // Loading and error states
   const [loading, setLoading] = useState(false);
@@ -57,19 +62,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // ==============================================
-  // EFFECTS
+  // EFFECTS – Load data when panel opens
   // ==============================================
-
-  // Load data when panel opens
   useEffect(() => {
     if (isOpen && data) {
-      // Set main data
+      // Set main data (common for all types)
       setMainData({ ...data });
 
       if (entityType === 'inventory') {
         // Fetch quantity record for this item
         fetchQuantity(data.item_id);
-        // Fetch all classifications
+        // Fetch all classifications for dropdown
         fetchClassifications();
         // Set selected classification from inventory data
         setSelectedClassId(data.classification_id || null);
@@ -78,11 +81,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
           setSelectedClassTitle(data.classification.classification_title);
           setSelectedClassDesc(data.classification.classification_description);
         }
+      } else if (entityType === 'customer' || entityType === 'supplier') {
+        // Fetch related records (bank, contact, tax, liabilities) using foreign keys
+        fetchRelatedData();
       }
     }
   }, [isOpen, data, entityType]);
 
-  // Fetch quantity for the item
+  // Fetch quantity for the item (inventory only)
   const fetchQuantity = async (itemId: number) => {
     try {
       setLoadingQuantity(true);
@@ -101,7 +107,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
     }
   };
 
-  // Fetch all classifications for dropdown
+  // Fetch all classifications for dropdown (inventory only)
   const fetchClassifications = async () => {
     try {
       setLoadingClasses(true);
@@ -119,12 +125,106 @@ const EditPanel: React.FC<EditPanelProps> = ({
     }
   };
 
-  // When classification selection changes, update title/desc
+  // Fetch related records for customer/supplier (bank, contact, tax, liabilities)
+  const fetchRelatedData = async () => {
+    setLoadingRelated(true);
+    try {
+      // Fetch bank account
+      if (data.bank_id) {
+        const { data: bank, error } = await supabase
+          .from('bank_acc')
+          .select('*')
+          .eq('bank_id', data.bank_id)
+          .maybeSingle();
+        if (!error) setBankData(bank || {});
+      } else {
+        setBankData({});
+      }
+
+      // Fetch contact info
+      if (data.contact_id) {
+        const { data: contact, error } = await supabase
+          .from('contact_info')
+          .select('*')
+          .eq('contact_id', data.contact_id)
+          .maybeSingle();
+        if (!error) setContactData(contact || {});
+      } else {
+        setContactData({});
+      }
+
+      // Fetch tax
+      if (data.tax_id) {
+        const { data: tax, error } = await supabase
+          .from('tax')
+          .select('*')
+          .eq('tax_id', data.tax_id)
+          .maybeSingle();
+        if (!error) setTaxData(tax || {});
+      } else {
+        setTaxData({});
+      }
+
+      // Fetch liabilities
+      if (data.liabilities_id) {
+        const { data: liabilities, error } = await supabase
+          .from('liabilities')
+          .select('*')
+          .eq('liabilities_id', data.liabilities_id)
+          .maybeSingle();
+        if (!error) setLiabilitiesData(liabilities || {});
+      } else {
+        setLiabilitiesData({});
+      }
+    } catch (err: any) {
+      console.error('Error fetching related data:', err);
+    } finally {
+      setLoadingRelated(false);
+    }
+  };
+
+  // When classification selection changes, update title/desc (inventory only)
   const handleClassificationChange = (classId: number) => {
     setSelectedClassId(classId);
     const selected = classifications.find(c => c.classification_id === classId);
     setSelectedClassTitle(selected?.classification_title || '');
     setSelectedClassDesc(selected?.classification_description || '');
+  };
+
+  // ==============================================
+  // UPSERT HELPER FOR RELATED TABLES (customer/supplier)
+  // ==============================================
+  /**
+   * upsertRecord – inserts or updates a related record (bank, contact, tax, liabilities)
+   * and returns the new ID. If no ID exists, it inserts and updates the main table's foreign key.
+   */
+  const upsertRecord = async (table: string, idField: string, idValue: number | null, recordData: any, mainIdName: string, mainIdValue: number) => {
+    if (!recordData || Object.keys(recordData).length === 0) return null;
+
+    if (idValue) {
+      // Update existing record
+      const { error } = await supabase
+        .from(table)
+        .update(recordData)
+        .eq(idField, idValue);
+      if (error) throw error;
+      return idValue;
+    } else {
+      // Insert new record
+      const { data, error } = await supabase
+        .from(table)
+        .insert([recordData])
+        .select();
+      if (error) throw error;
+      const newId = data?.[0]?.[idField];
+      // Update main table with new foreign key
+      const { error: updateError } = await supabase
+        .from(entityType === 'customer' ? 'customer' : 'supplier')
+        .update({ [mainIdName]: newId })
+        .eq(entityType === 'customer' ? 'customer_id' : 'supplier_id', mainIdValue);
+      if (updateError) throw updateError;
+      return newId;
+    }
   };
 
   // ==============================================
@@ -161,7 +261,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
             })
             .eq('quantity_id', quantityData.quantity_id);
           if (qtyError) throw qtyError;
-        } else if (quantityData.quantity !== undefined) {
+        } else if (quantityData.quantity !== undefined && quantityData.quantity !== '') {
           // Create new quantity record
           const { error: qtyError } = await supabase
             .from('quantity')
@@ -172,30 +272,44 @@ const EditPanel: React.FC<EditPanelProps> = ({
             });
           if (qtyError) throw qtyError;
         }
-      } else if (entityType === 'customer') {
-        // Update customer table
-        const { error } = await supabase
-          .from('customer')
+      } else if (entityType === 'customer' || entityType === 'supplier') {
+        const tableName = entityType === 'customer' ? 'customer' : 'supplier';
+        const idField = entityType === 'customer' ? 'customer_id' : 'supplier_id';
+        const mainIdValue = data[idField];
+
+        // Update main table with all fields (including extra ones like control_ac, branch_name, etc.)
+        const { error: mainError } = await supabase
+          .from(tableName)
           .update({
             company_name: mainData.company_name,
+            control_ac: mainData.control_ac || null,
+            branch_name: mainData.branch_name || null,
             industry_name: mainData.industry_name || null,
             industry_code: mainData.industry_code || null,
             register_no_new: mainData.register_no_new || null,
+            register_no_old: mainData.register_no_old || null,
+            status: mainData.status || null,
           })
-          .eq('customer_id', data.customer_id);
-        if (error) throw error;
-      } else if (entityType === 'supplier') {
-        // Update supplier table
-        const { error } = await supabase
-          .from('supplier')
-          .update({
-            company_name: mainData.company_name,
-            industry_name: mainData.industry_name || null,
-            industry_code: mainData.industry_code || null,
-            register_no_new: mainData.register_no_new || null,
-          })
-          .eq('supplier_id', data.supplier_id);
-        if (error) throw error;
+          .eq(idField, mainIdValue);
+        if (mainError) throw mainError;
+
+        // Upsert related records (bank, contact, tax, liabilities)
+        if (bankData) {
+          const newBankId = await upsertRecord('bank_acc', 'bank_id', data.bank_id, bankData, 'bank_id', mainIdValue);
+          if (newBankId !== data.bank_id) data.bank_id = newBankId;
+        }
+        if (contactData) {
+          const newContactId = await upsertRecord('contact_info', 'contact_id', data.contact_id, contactData, 'contact_id', mainIdValue);
+          if (newContactId !== data.contact_id) data.contact_id = newContactId;
+        }
+        if (taxData) {
+          const newTaxId = await upsertRecord('tax', 'tax_id', data.tax_id, taxData, 'tax_id', mainIdValue);
+          if (newTaxId !== data.tax_id) data.tax_id = newTaxId;
+        }
+        if (liabilitiesData) {
+          const newLiabId = await upsertRecord('liabilities', 'liabilities_id', data.liabilities_id, liabilitiesData, 'liabilities_id', mainIdValue);
+          if (newLiabId !== data.liabilities_id) data.liabilities_id = newLiabId;
+        }
       }
 
       // Refresh parent list
@@ -259,10 +373,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // ==============================================
   if (!isOpen) return null;
 
+  const isInventory = entityType === 'inventory';
+  const isCustomerSupplier = entityType === 'customer' || entityType === 'supplier';
+
   return (
     <>
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
+        <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
           {/* Header */}
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">
@@ -283,106 +400,240 @@ const EditPanel: React.FC<EditPanelProps> = ({
             </div>
           )}
 
-          {/* Tabs (only for inventory) */}
-          {entityType === 'inventory' && (
-            <div className="border-b border-gray-200 mb-4">
-              <nav className="-mb-px flex space-x-8">
-                <button
-                  onClick={() => setActiveTab('main')}
-                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'main'
-                      ? 'border-primary-500 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  Main
-                </button>
-                <button
-                  onClick={() => setActiveTab('quantity')}
-                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'quantity'
-                      ? 'border-primary-500 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  Quantity
-                </button>
-                <button
-                  onClick={() => setActiveTab('classification')}
-                  className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'classification'
-                      ? 'border-primary-500 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  Classification
-                </button>
-              </nav>
-            </div>
-          )}
+          {/* Tabs (different sets for inventory vs customer/supplier) */}
+          <div className="border-b border-gray-200 mb-4">
+            <nav className="-mb-px flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveTab('main')}
+                className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                  activeTab === 'main'
+                    ? 'border-primary-500 text-primary-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Main
+              </button>
+              {isInventory && (
+                <>
+                  <button
+                    onClick={() => setActiveTab('quantity')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                      activeTab === 'quantity'
+                        ? 'border-primary-500 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Quantity
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('classification')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                      activeTab === 'classification'
+                        ? 'border-primary-500 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Classification
+                  </button>
+                </>
+              )}
+              {isCustomerSupplier && (
+                <>
+                  <button
+                    onClick={() => setActiveTab('bank')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                      activeTab === 'bank'
+                        ? 'border-primary-500 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Bank Acc
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('contact')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                      activeTab === 'contact'
+                        ? 'border-primary-500 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Contact Info
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('tax')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                      activeTab === 'tax'
+                        ? 'border-primary-500 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Tax
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('liabilities')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm ${
+                      activeTab === 'liabilities'
+                        ? 'border-primary-500 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Liabilities
+                  </button>
+                </>
+              )}
+            </nav>
+          </div>
 
           {/* Form content */}
           <div className="space-y-4">
-            {/* MAIN TAB – inventory fields */}
-            {(entityType === 'inventory' && activeTab === 'main') && (
+            {/* MAIN TAB (common for all) */}
+            {activeTab === 'main' && (
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
-                  <input
-                    type="text"
-                    value={mainData.item_name || ''}
-                    onChange={(e) => setMainData({ ...mainData, item_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Serial Number</label>
-                  <input
-                    type="text"
-                    value={mainData.serial_number || ''}
-                    onChange={(e) => setMainData({ ...mainData, serial_number: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Balance Quantity</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={mainData.balance_qty || ''}
-                    onChange={(e) => setMainData({ ...mainData, balance_qty: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
-                  <input
-                    type="text"
-                    value={mainData.uom || ''}
-                    onChange={(e) => setMainData({ ...mainData, uom: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                    placeholder="e.g., pcs, kg, box"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <textarea
-                    value={mainData.description || ''}
-                    onChange={(e) => setMainData({ ...mainData, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
+                {isInventory && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
+                      <input
+                        type="text"
+                        value={mainData.item_name || ''}
+                        onChange={(e) => setMainData({ ...mainData, item_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Serial Number</label>
+                      <input
+                        type="text"
+                        value={mainData.serial_number || ''}
+                        onChange={(e) => setMainData({ ...mainData, serial_number: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Balance Quantity</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={mainData.balance_qty || ''}
+                        onChange={(e) => setMainData({ ...mainData, balance_qty: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                      <input
+                        type="text"
+                        value={mainData.uom || ''}
+                        onChange={(e) => setMainData({ ...mainData, uom: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                        placeholder="e.g., pcs, kg, box"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                      <textarea
+                        value={mainData.description || ''}
+                        onChange={(e) => setMainData({ ...mainData, description: e.target.value })}
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
+                {isCustomerSupplier && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company Name *</label>
+                      <input
+                        type="text"
+                        value={mainData.company_name || ''}
+                        onChange={(e) => setMainData({ ...mainData, company_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Control Account</label>
+                      <input
+                        type="text"
+                        value={mainData.control_ac || ''}
+                        onChange={(e) => setMainData({ ...mainData, control_ac: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Branch Name</label>
+                      <input
+                        type="text"
+                        value={mainData.branch_name || ''}
+                        onChange={(e) => setMainData({ ...mainData, branch_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Industry Name</label>
+                      <input
+                        type="text"
+                        value={mainData.industry_name || ''}
+                        onChange={(e) => setMainData({ ...mainData, industry_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Industry Code</label>
+                      <input
+                        type="text"
+                        value={mainData.industry_code || ''}
+                        onChange={(e) => setMainData({ ...mainData, industry_code: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No (New)</label>
+                      <input
+                        type="text"
+                        value={mainData.register_no_new || ''}
+                        onChange={(e) => setMainData({ ...mainData, register_no_new: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No (Old)</label>
+                      <input
+                        type="text"
+                        value={mainData.register_no_old || ''}
+                        onChange={(e) => setMainData({ ...mainData, register_no_old: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <input
+                        type="text"
+                        value={mainData.status || ''}
+                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
-            {/* QUANTITY TAB */}
-            {(entityType === 'inventory' && activeTab === 'quantity') && (
+            {/* INVENTORY QUANTITY TAB */}
+            {isInventory && activeTab === 'quantity' && (
               <div className="space-y-4">
                 {loadingQuantity ? (
                   <div className="text-center py-4">Loading quantity data...</div>
@@ -414,8 +665,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
-            {/* CLASSIFICATION TAB */}
-            {(entityType === 'inventory' && activeTab === 'classification') && (
+            {/* INVENTORY CLASSIFICATION TAB */}
+            {isInventory && activeTab === 'classification' && (
               <div className="space-y-4">
                 {loadingClasses ? (
                   <div className="text-center py-4">Loading classifications...</div>
@@ -460,54 +711,239 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
-            {/* CUSTOMER / SUPPLIER FIELDS */}
-            {(entityType === 'customer' || entityType === 'supplier') && (
+            {/* BANK ACC TAB (customer/supplier) */}
+            {isCustomerSupplier && activeTab === 'bank' && (
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Company Name *</label>
-                  <input
-                    type="text"
-                    value={mainData.company_name || ''}
-                    onChange={(e) => setMainData({ ...mainData, company_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Industry Name</label>
-                  <input
-                    type="text"
-                    value={mainData.industry_name || ''}
-                    onChange={(e) => setMainData({ ...mainData, industry_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Industry Code</label>
-                  <input
-                    type="text"
-                    value={mainData.industry_code || ''}
-                    onChange={(e) => setMainData({ ...mainData, industry_code: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Register No (New)</label>
-                  <input
-                    type="text"
-                    value={mainData.register_no_new || ''}
-                    onChange={(e) => setMainData({ ...mainData, register_no_new: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    disabled={loading}
-                  />
-                </div>
+                {loadingRelated ? (
+                  <div className="text-center py-4">Loading bank data...</div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
+                      <input
+                        type="text"
+                        value={bankData?.bank_name || ''}
+                        onChange={(e) => setBankData({ ...bankData, bank_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Account Number</label>
+                      <input
+                        type="text"
+                        value={bankData?.acc_no || ''}
+                        onChange={(e) => setBankData({ ...bankData, acc_no: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Account Name</label>
+                      <input
+                        type="text"
+                        value={bankData?.acc_name || ''}
+                        onChange={(e) => setBankData({ ...bankData, acc_name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+                      <input
+                        type="text"
+                        value={bankData?.ref || ''}
+                        onChange={(e) => setBankData({ ...bankData, ref: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <input
+                        type="text"
+                        value={bankData?.status || ''}
+                        onChange={(e) => setBankData({ ...bankData, status: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* CONTACT INFO TAB (customer/supplier) */}
+            {isCustomerSupplier && activeTab === 'contact' && (
+              <div className="space-y-4">
+                {loadingRelated ? (
+                  <div className="text-center py-4">Loading contact data...</div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input
+                        type="email"
+                        value={contactData?.email || ''}
+                        onChange={(e) => setContactData({ ...contactData, email: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input
+                        type="text"
+                        value={contactData?.phone || ''}
+                        onChange={(e) => setContactData({ ...contactData, phone: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={contactData?.address || ''}
+                        onChange={(e) => setContactData({ ...contactData, address: e.target.value })}
+                        rows={2}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+                      <input
+                        type="text"
+                        value={contactData?.country || ''}
+                        onChange={(e) => setContactData({ ...contactData, country: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+                      <input
+                        type="text"
+                        value={contactData?.city || ''}
+                        onChange={(e) => setContactData({ ...contactData, city: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
+                      <input
+                        type="text"
+                        value={contactData?.state || ''}
+                        onChange={(e) => setContactData({ ...contactData, state: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Post Code</label>
+                      <input
+                        type="text"
+                        value={contactData?.post_code || ''}
+                        onChange={(e) => setContactData({ ...contactData, post_code: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* TAX TAB (customer/supplier) */}
+            {isCustomerSupplier && activeTab === 'tax' && (
+            <div className="space-y-4">
+                {loadingRelated ? (
+                <div className="text-center py-4">Loading tax data...</div>
+                ) : (
+                <>
+                    <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">BRN</label>
+                    <input
+                        type="text"
+                        value={taxData?.brn || ''}
+                        onChange={(e) => setTaxData({ ...taxData, brn: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                    />
+                    </div>
+                    <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">TIN</label>
+                    <input
+                        type="text"
+                        value={taxData?.tin || ''}
+                        onChange={(e) => setTaxData({ ...taxData, tin: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                    />
+                    </div>
+                </>
+                )}
+            </div>
+            )}
+
+            {/* LIABILITIES TAB (customer/supplier) */}
+            {isCustomerSupplier && activeTab === 'liabilities' && (
+              <div className="space-y-4">
+                {loadingRelated ? (
+                  <div className="text-center py-4">Loading liabilities data...</div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Credit Terms</label>
+                      <input
+                        type="text"
+                        value={liabilitiesData?.credit_terms || ''}
+                        onChange={(e) => setLiabilitiesData({ ...liabilitiesData, credit_terms: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Credit Limit</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={liabilitiesData?.credit_limit || ''}
+                        onChange={(e) => setLiabilitiesData({ ...liabilitiesData, credit_limit: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Allow Exceed Credit Limit</label>
+                      <select
+                        value={liabilitiesData?.allow_exceed_credit_limit ? 'true' : 'false'}
+                        onChange={(e) => setLiabilitiesData({ ...liabilitiesData, allow_exceed_credit_limit: e.target.value === 'true' })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      >
+                        <option value="false">No</option>
+                        <option value="true">Yes</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Date</label>
+                      <input
+                        type="date"
+                        value={liabilitiesData?.invoice_date || ''}
+                        onChange={(e) => setLiabilitiesData({ ...liabilitiesData, invoice_date: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
 
-          {/* Buttons */}
+          {/* Action Buttons */}
           <div className="mt-6 flex justify-end space-x-3">
             <button
               onClick={onClose}

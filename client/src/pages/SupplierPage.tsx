@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
-import { PlusIcon, PackageIcon } from '../components/ui/Icons';
+import EditPanel from '../components/ui/EditPanel';
+import { PlusIcon, PackageIcon, EditIcon } from '../components/ui/Icons';
 
 // ==============================================
 // TYPE DEFINITIONS
@@ -14,6 +15,14 @@ interface Supplier {
   industry_name?: string;
   industry_code?: string;
   register_no_new?: string;
+  control_ac?: string;
+  branch_name?: string;
+  register_no_old?: string;
+  status?: string;
+  tax_id?: number;
+  bank_id?: number;
+  contact_id?: number;
+  liabilities_id?: number;
 }
 
 // ==============================================
@@ -30,7 +39,7 @@ const SupplierPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Modal state
+  // Add modal state
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
     company_name: '',
@@ -39,6 +48,10 @@ const SupplierPage: React.FC = () => {
     register_no_new: ''
   });
   const [submitting, setSubmitting] = useState(false);
+
+  // Edit panel state
+  const [showEditPanel, setShowEditPanel] = useState(false);
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
 
   // Confirmation dialog state
   const [showConfirm, setShowConfirm] = useState(false);
@@ -51,9 +64,24 @@ const SupplierPage: React.FC = () => {
       setLoading(true);
       setError('');
 
+      // Fetch all fields needed for editing (including foreign keys)
       const { data, error: fetchError } = await supabase
         .from('supplier')
-        .select('supplier_id, company_name, industry_name, industry_code, register_no_new')
+        .select(`
+          supplier_id,
+          company_name,
+          industry_name,
+          industry_code,
+          register_no_new,
+          control_ac,
+          branch_name,
+          register_no_old,
+          status,
+          tax_id,
+          bank_id,
+          contact_id,
+          liabilities_id
+        `)
         .order('supplier_id', { ascending: true });
 
       if (fetchError) throw fetchError;
@@ -93,10 +121,9 @@ const SupplierPage: React.FC = () => {
         register_no_new: formData.register_no_new || null,
       };
 
-      const { data, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from('supplier')
-        .insert([newSupplier])
-        .select();
+        .insert([newSupplier]);
 
       if (insertError) throw insertError;
 
@@ -131,6 +158,22 @@ const SupplierPage: React.FC = () => {
     setShowModal(false);
     setFormData({ company_name: '', industry_name: '', industry_code: '', register_no_new: '' });
     setError('');
+  };
+
+  // ==============================================
+  // EDIT HANDLERS
+  // ==============================================
+  const handleEditClick = (supplier: Supplier) => {
+    setSelectedSupplier(supplier);
+    setShowEditPanel(true);
+  };
+
+  const handleUpdateSuccess = () => {
+    fetchSuppliers(); // Refresh list after update
+  };
+
+  const handleDeleteSuccess = () => {
+    fetchSuppliers(); // Refresh list after delete
   };
 
   // ==============================================
@@ -171,12 +214,13 @@ const SupplierPage: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Industry Name</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Industry Code</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Register No (New)</th>
-                   </tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {suppliers.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                         <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5 0a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
                         </svg>
@@ -201,6 +245,15 @@ const SupplierPage: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {supplier.register_no_new || '—'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <button
+                            onClick={() => handleEditClick(supplier)}
+                            className="text-primary-600 hover:text-primary-800 transition-colors"
+                            title="Edit supplier"
+                          >
+                            <EditIcon className="w-5 h-5" />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -345,6 +398,18 @@ const SupplierPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ============================================== */}
+      {/* EDIT PANEL                                     */}
+      {/* ============================================== */}
+      <EditPanel
+        isOpen={showEditPanel}
+        onClose={() => setShowEditPanel(false)}
+        entityType="supplier"
+        data={selectedSupplier}
+        onUpdate={handleUpdateSuccess}
+        onDelete={handleDeleteSuccess}
+      />
 
       {/* ============================================== */}
       {/* CONFIRMATION DIALOG                            */}
