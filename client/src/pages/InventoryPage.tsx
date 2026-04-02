@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
-import ConfirmationDialog from '../components/ui/ConfirmationDialog'; // Import custom confirmation dialog
-import { PlusIcon, ItemIcon, CIcon } from '../components/ui/Icons';
+import ConfirmationDialog from '../components/ui/ConfirmationDialog';
+import EditPanel from '../components/ui/EditPanel'; // Import the edit panel component
+import { PlusIcon, ItemIcon, CIcon, EditIcon } from '../components/ui/Icons'; // Added EditIcon
 
 // ==============================================
 // TYPE DEFINITIONS
@@ -11,6 +12,7 @@ import { PlusIcon, ItemIcon, CIcon } from '../components/ui/Icons';
 /**
  * InventoryItem Interface
  * Matches the structure of the inventory table, focusing on fields needed for this page.
+ * Extended with description and classification_id for editing.
  */
 interface InventoryItem {
   item_id: number;          // Auto‑generated primary key
@@ -18,6 +20,8 @@ interface InventoryItem {
   serial_number?: string;   // Optional serial number
   balance_qty?: number;     // Current stock quantity
   uom?: string;             // Unit of measure (e.g., pcs, kg)
+  description?: string;     // Optional description (for edit panel)
+  classification_id?: number; // Optional classification (for edit panel)
 }
 
 // ==============================================
@@ -37,6 +41,10 @@ const InventoryPage: React.FC = () => {
   // Modal visibility states
   const [showItemModal, setShowItemModal] = useState(false);
   const [showClassModal, setShowClassModal] = useState(false);
+
+  // Edit panel state
+  const [showEditPanel, setShowEditPanel] = useState(false);        // Controls edit panel visibility
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null); // Item being edited
 
   // Form data for adding a new item
   const [itemFormData, setItemFormData] = useState({
@@ -65,7 +73,7 @@ const InventoryPage: React.FC = () => {
   // ==============================================
   /**
    * fetchItems – retrieves all inventory items from the database.
-   * Fetches only the columns needed for the table view.
+   * Fetches columns needed for display and editing (includes description and classification_id).
    */
   const fetchItems = async () => {
     try {
@@ -74,7 +82,7 @@ const InventoryPage: React.FC = () => {
 
       const { data, error: fetchError } = await supabase
         .from('inventory')
-        .select('item_id, item_name, serial_number, balance_qty, uom')
+        .select('item_id, item_name, serial_number, balance_qty, uom, description, classification_id')
         .order('item_id', { ascending: true });
 
       if (fetchError) throw fetchError;
@@ -226,6 +234,31 @@ const InventoryPage: React.FC = () => {
   };
 
   // ==============================================
+  // EDIT HANDLERS
+  // ==============================================
+  /**
+   * handleEditClick – opens the edit panel with the selected item's data.
+   */
+  const handleEditClick = (item: InventoryItem) => {
+    setSelectedItem(item);
+    setShowEditPanel(true);
+  };
+
+  /**
+   * handleUpdateSuccess – callback after an item is updated; refreshes the list.
+   */
+  const handleUpdateSuccess = () => {
+    fetchItems(); // Refresh list after update
+  };
+
+  /**
+   * handleDeleteSuccess – callback after an item is deleted; refreshes the list.
+   */
+  const handleDeleteSuccess = () => {
+    fetchItems(); // Refresh list after delete
+  };
+
+  // ==============================================
   // RENDER
   // ==============================================
   return (
@@ -273,12 +306,15 @@ const InventoryPage: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       UOM
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
                    </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {items.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
                         <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5 0a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
                         </svg>
@@ -303,6 +339,15 @@ const InventoryPage: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {item.uom || '—'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <button
+                            onClick={() => handleEditClick(item)}
+                            className="text-primary-600 hover:text-primary-800 transition-colors"
+                            title="Edit item"
+                          >
+                            <EditIcon className="w-5 h-5" />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -545,6 +590,18 @@ const InventoryPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ============================================== */}
+      {/* EDIT PANEL                                      */}
+      {/* ============================================== */}
+      <EditPanel
+        isOpen={showEditPanel}
+        onClose={() => setShowEditPanel(false)}
+        entityType="inventory"
+        data={selectedItem}
+        onUpdate={handleUpdateSuccess}
+        onDelete={handleDeleteSuccess}
+      />
 
       {/* ============================================== */}
       {/* CONFIRMATION DIALOGS                           */}
