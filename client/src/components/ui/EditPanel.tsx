@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import { apiUpdateInventoryItem, apiDeleteInventoryItem, apiGetClassifications } from '../../lib/inventoryApi';
 import ConfirmationDialog from './ConfirmationDialog';
 
 // ==============================================
@@ -107,17 +108,16 @@ const EditPanel: React.FC<EditPanelProps> = ({
     }
   };
 
-  // Fetch all classifications for dropdown (inventory only)
+  // Fetch all classifications for dropdown (inventory only, read-only from API)
   const fetchClassifications = async () => {
     try {
       setLoadingClasses(true);
-      const { data, error } = await supabase
-        .from('classification')
-        .select('classification_id, classification_code, classification_title, classification_description')
-        .order('classification_code');
-
-      if (error) throw error;
-      setClassifications(data || []);
+      const result = await apiGetClassifications();
+      if (result.success) {
+        setClassifications(result.data || []);
+      } else {
+        console.error('Error fetching classifications:', result.message);
+      }
     } catch (err: any) {
       console.error('Error fetching classifications:', err);
     } finally {
@@ -236,41 +236,19 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
     try {
       if (entityType === 'inventory') {
-        // Update inventory table
-        const { error: updateError } = await supabase
-          .from('inventory')
-          .update({
-            item_name: mainData.item_name,
-            serial_number: mainData.serial_number || null,
-            balance_qty: mainData.balance_qty ? parseFloat(mainData.balance_qty) : null,
-            uom: mainData.uom || null,
-            description: mainData.description || null,
-            classification_id: selectedClassId,
-          })
-          .eq('item_id', data.item_id);
+        // Call backend API (automatically creates log entry)
+        const result = await apiUpdateInventoryItem({
+          item_id: data.item_id,
+          item_name: mainData.item_name,
+          serial_number: mainData.serial_number || undefined,
+          balance_qty: mainData.balance_qty ? parseFloat(mainData.balance_qty) : undefined,
+          uom: mainData.uom || undefined,
+          description: mainData.description || undefined,
+          classification_id: selectedClassId || undefined,
+        });
 
-        if (updateError) throw updateError;
-
-        // Update quantity table (if exists)
-        if (quantityData.quantity_id) {
-          const { error: qtyError } = await supabase
-            .from('quantity')
-            .update({
-              quantity: quantityData.quantity,
-              invoice_id: quantityData.invoice_id,
-            })
-            .eq('quantity_id', quantityData.quantity_id);
-          if (qtyError) throw qtyError;
-        } else if (quantityData.quantity !== undefined && quantityData.quantity !== '') {
-          // Create new quantity record
-          const { error: qtyError } = await supabase
-            .from('quantity')
-            .insert({
-              item_id: data.item_id,
-              quantity: quantityData.quantity,
-              invoice_id: quantityData.invoice_id,
-            });
-          if (qtyError) throw qtyError;
+        if (!result.success) {
+          throw new Error(result.message || 'Failed to update item');
         }
       } else if (entityType === 'customer' || entityType === 'supplier') {
         const tableName = entityType === 'customer' ? 'customer' : 'supplier';
@@ -338,13 +316,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
     try {
       if (entityType === 'inventory') {
-        // Delete from inventory (cascade should handle quantity)
-        const { error } = await supabase
-          .from('inventory')
-          .delete()
-          .eq('item_id', data.item_id);
-        if (error) throw error;
+        // Call backend API (automatically creates log entry)
+        const result = await apiDeleteInventoryItem(data.item_id);
+        if (!result.success) {
+          throw new Error(result.message || 'Failed to delete item');
+        }
       } else if (entityType === 'customer') {
+        // Customer/supplier still use direct Supabase (TODO: refactor to backend API)
         const { error } = await supabase
           .from('customer')
           .delete()

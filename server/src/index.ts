@@ -9,6 +9,7 @@ import { pool } from './config/database';
 
 // Import routes
 import authRoutes from './routes/auth';
+import inventoryRoutes from './routes/inventory';
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/inventory', inventoryRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

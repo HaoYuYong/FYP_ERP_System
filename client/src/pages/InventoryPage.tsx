@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
-import EditPanel from '../components/ui/EditPanel'; // Import the edit panel component
-import { PlusIcon, ItemIcon, CIcon, EditIcon } from '../components/ui/Icons'; // Added EditIcon
+import EditPanel from '../components/ui/EditPanel';
+import {
+  apiGetInventoryItems,
+  apiCreateInventoryItem,
+  apiCreateClassification,
+} from '../lib/inventoryApi';
+import { PlusIcon, ItemIcon, CIcon, EditIcon } from '../components/ui/Icons';
 
 // ==============================================
 // TYPE DEFINITIONS
@@ -72,22 +76,20 @@ const InventoryPage: React.FC = () => {
   // FETCH INVENTORY ITEMS
   // ==============================================
   /**
-   * fetchItems – retrieves all inventory items from the database.
-   * Fetches columns needed for display and editing (includes description and classification_id).
+   * fetchItems – retrieves all inventory items via backend API (read-only, no logging needed).
    */
   const fetchItems = async () => {
     try {
       setLoading(true);
       setError('');
 
-      const { data, error: fetchError } = await supabase
-        .from('inventory')
-        .select('item_id, item_name, serial_number, balance_qty, uom, description, classification_id')
-        .order('item_id', { ascending: true });
+      const result = await apiGetInventoryItems();
 
-      if (fetchError) throw fetchError;
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to fetch inventory');
+      }
 
-      setItems(data || []);
+      setItems(result.data || []);
     } catch (err: any) {
       setError(err.message);
       console.error('Error fetching inventory:', err);
@@ -105,8 +107,7 @@ const InventoryPage: React.FC = () => {
   // ADD NEW ITEM
   // ==============================================
   /**
-   * handleAddItem – validates form, inserts new item into inventory table,
-   * refreshes the list, and shows custom confirmation dialog.
+   * handleAddItem – validates form, sends to backend API, logs operation, refreshes list.
    */
   const handleAddItem = async () => {
     // Validate required field
@@ -119,25 +120,22 @@ const InventoryPage: React.FC = () => {
     setError('');
 
     try {
-      // Prepare record for insertion
-      const newItem = {
+      // Call backend API (automatically creates log entry)
+      const result = await apiCreateInventoryItem({
         item_name: itemFormData.item_name,
-        serial_number: itemFormData.serial_number || null,
-        balance_qty: itemFormData.balance_qty ? parseFloat(itemFormData.balance_qty) : null,
-        uom: itemFormData.uom || null,
-        // Other fields (description, classification_id, log_id) are left as NULL
-      };
+        serial_number: itemFormData.serial_number || undefined,
+        balance_qty: itemFormData.balance_qty ? parseFloat(itemFormData.balance_qty) : undefined,
+        uom: itemFormData.uom || undefined,
+      });
 
-      const { error: insertError } = await supabase
-        .from('inventory')
-        .insert([newItem]);
-
-      if (insertError) throw insertError;
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to create item');
+      }
 
       // Refresh the table with updated data
       await fetchItems();
 
-      // Show custom confirmation instead of window.confirm
+      // Show custom confirmation dialog
       setShowItemConfirm(true);
     } catch (err: any) {
       setError(err.message);
@@ -162,11 +160,10 @@ const InventoryPage: React.FC = () => {
   };
 
   // ==============================================
-  // ADD NEW CLASSIFICATION (hidden from view)
+  // ADD NEW CLASSIFICATION
   // ==============================================
   /**
-   * handleAddClassification – validates and inserts a new classification.
-   * This will be used later when the classification module is expanded.
+   * handleAddClassification – validates and sends to backend API (automatically logs operation).
    */
   const handleAddClassification = async () => {
     if (!classFormData.classification_code.trim()) {
@@ -182,17 +179,16 @@ const InventoryPage: React.FC = () => {
     setError('');
 
     try {
-      const newClass = {
+      // Call backend API (automatically creates log entry)
+      const result = await apiCreateClassification({
         classification_code: classFormData.classification_code,
         classification_title: classFormData.classification_title,
-        classification_description: classFormData.classification_description || null,
-      };
+        classification_description: classFormData.classification_description || undefined,
+      });
 
-      const { error: insertError } = await supabase
-        .from('classification')
-        .insert([newClass]);
-
-      if (insertError) throw insertError;
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to create classification');
+      }
 
       // Show custom confirmation
       setShowClassConfirm(true);
