@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom'; // <-- Added Link import
-import { registerUser } from '../lib/supabase';
-import { RegisterFormData, AuthResponse } from '../types';
+import { useNavigate, Link } from 'react-router-dom';
+import { apiRegisterUser } from '../lib/api';
+import { RegisterFormData } from '../types';
 
 const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
@@ -23,19 +23,21 @@ const RegisterPage: React.FC = () => {
     setSuccess('');
     setLoading(true);
 
-    // Validation
+    // Validation: Check password match
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
       setLoading(false);
       return;
     }
 
+    // Validation: Check password length
     if (formData.password.length < 6) {
       setError('Password must be at least 6 characters long');
       setLoading(false);
       return;
     }
 
+    // Validation: Check email format
     if (!formData.email.includes('@')) {
       setError('Please enter a valid email address');
       setLoading(false);
@@ -43,19 +45,19 @@ const RegisterPage: React.FC = () => {
     }
 
     try {
-      // Call Supabase registration function
-      const result: AuthResponse = await registerUser(
-        formData.email,
-        formData.password,
-        formData.firstName,
-        formData.lastName,
-        formData.role
-      );
+      // Call backend API to register user (creates auth + user record + logging)
+      const result = await apiRegisterUser({
+        email: formData.email,
+        password: formData.password,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        role: formData.role as 'admin' | 'manager' | 'staff',
+      });
 
       if (result.success) {
         setSuccess(result.message);
         
-        // Reset form
+        // Reset form after successful registration
         setFormData({
           email: '',
           password: '',
@@ -65,10 +67,10 @@ const RegisterPage: React.FC = () => {
           role: 'staff',
         });
 
-        // Optionally redirect after delay
+        // Redirect to users page after delay
         setTimeout(() => {
-          // navigate('/');
-        }, 3000);
+          navigate('/users');
+        }, 2000);
       } else {
         setError(result.message);
       }
@@ -265,21 +267,21 @@ const RegisterPage: React.FC = () => {
           </div>
 
           {/* Information Box */}
-          <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
             <div className="flex items-start">
               <div className="flex-shrink-0">
-                <svg className="h-5 w-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                <svg className="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 5v8a2 2 0 01-2 2h-5l-5 4v-4H4a2 2 0 01-2-2V5a2 2 0 012-2h12a2 2 0 012 2zm-11-1a1 1 0 11-2 0 1 1 0 012 0zm5 0a1 1 0 11-2 0 1 1 0 012 0zm4 0a1 1 0 11-2 0 1 1 0 012 0z" clipRule="evenodd" />
                 </svg>
               </div>
               <div className="ml-3">
-                <h3 className="text-sm font-medium text-yellow-800">How Registration Works</h3>
-                <div className="mt-1 text-sm text-yellow-700">
+                <h3 className="text-sm font-medium text-blue-800">Registration Process</h3>
+                <div className="mt-1 text-sm text-blue-700">
                   <ul className="list-disc pl-5 space-y-1">
-                    <li>User is registered in Supabase Authentication</li>
-                    <li>A database trigger automatically creates user record in the users table</li>
-                    <li>Email verification is required (can be disabled in Supabase settings)</li>
-                    <li>User metadata (name, role) is stored in auth.users.raw_user_meta_data</li>
+                    <li>Backend creates Supabase Auth user</li>
+                    <li>User record inserted in database with unique display_id (A/M/S + number)</li>
+                    <li>Log entry created to track user creation (audit trail)</li>
+                    <li>Email verification sent to user (optional based on Supabase settings)</li>
                   </ul>
                 </div>
               </div>

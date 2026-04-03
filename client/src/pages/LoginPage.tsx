@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-import { User } from '../types';
+import { apiLoginUser } from '../lib/api';
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -22,30 +21,6 @@ const LoginPage: React.FC = () => {
     }
   }, [showError]);
 
-  // Function to get user role from database after login
-  const getUserRole = async (userId: string): Promise<string | null> => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select(`
-          role_id,
-          role:role_id (
-            role_type
-          )
-        `)
-        .eq('auth_id', userId)
-        .single();
-
-      if (error) throw error;
-      // Access first element since Supabase returns relationship as array
-      const role = Array.isArray(data?.role) ? data?.role[0] : data?.role;
-      return role?.role_type || null;
-    } catch (err) {
-      console.error('Error fetching user role:', err);
-      return null;
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -53,40 +28,33 @@ const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      // Sign in with Supabase Auth
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      // Call backend API to login (backend handles auth verification + role fetch)
+      const result = await apiLoginUser({ email, password });
 
-      if (signInError) throw signInError;
+      if (!result.success) {
+        setError(result.message || 'Login failed');
+        setShowError(true);
+        return;
+      }
 
-      if (data.user) {
-        // Fetch user role from database
-        const role = await getUserRole(data.user.id);
-
-        // Redirect based on role
-        switch (role) {
-          case 'admin':
-            navigate('/admin');
-            break;
-          case 'manager':
-            navigate('/manager');
-            break;
-          case 'staff':
-            navigate('/staff');
-            break;
-          default:
-            // Fallback: if role not found, go to a generic dashboard or show error
-            setError('User role not found. Please contact administrator.');
-            setShowError(true);
-            // Sign out the user because role is missing
-            await supabase.auth.signOut();
-        }
+      // Redirect based on user role returned from backend
+      switch (result.user?.role) {
+        case 'admin':
+          navigate('/admin');
+          break;
+        case 'manager':
+          navigate('/manager');
+          break;
+        case 'staff':
+          navigate('/staff');
+          break;
+        default:
+          setError('User role not found. Please contact administrator.');
+          setShowError(true);
       }
     } catch (err: any) {
       console.error('Login error:', err);
-      setError(err.message || 'Wrong email or password, please try again and insert the correct password');
+      setError(err.message || 'Login failed. Please try again.');
       setShowError(true);
     } finally {
       setLoading(false);
