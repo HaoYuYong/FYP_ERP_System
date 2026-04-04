@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { apiGetSuppliers, apiCreateSupplier } from '../lib/supplierApi';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
 import EditPanel from '../components/ui/EditPanel';
@@ -64,29 +64,11 @@ const SupplierPage: React.FC = () => {
       setLoading(true);
       setError('');
 
-      // Fetch all fields needed for editing (including foreign keys)
-      const { data, error: fetchError } = await supabase
-        .from('supplier')
-        .select(`
-          supplier_id,
-          company_name,
-          industry_name,
-          industry_code,
-          register_no_new,
-          control_ac,
-          branch_name,
-          register_no_old,
-          status,
-          tax_id,
-          bank_id,
-          contact_id,
-          liabilities_id
-        `)
-        .order('supplier_id', { ascending: true });
+      // Call backend API instead of Supabase directly
+      const result = await apiGetSuppliers();
+      if (!result.success) throw new Error(result.message);
 
-      if (fetchError) throw fetchError;
-
-      setSuppliers(data || []);
+      setSuppliers(result.data || []);
     } catch (err: any) {
       setError(err.message);
       console.error('Error fetching suppliers:', err);
@@ -114,20 +96,18 @@ const SupplierPage: React.FC = () => {
     setError('');
 
     try {
-      const newSupplier = {
+      // Call backend API (automatically creates log entry)
+      const result = await apiCreateSupplier({
         company_name: formData.company_name,
         industry_name: formData.industry_name || null,
         industry_code: formData.industry_code || null,
         register_no_new: formData.register_no_new || null,
-      };
+      });
 
-      const { error: insertError } = await supabase
-        .from('supplier')
-        .insert([newSupplier]);
+      if (!result.success) throw new Error(result.message);
 
-      if (insertError) throw insertError;
-
-      await fetchSuppliers(); // Refresh the list
+      // Refresh list after successful creation
+      await fetchSuppliers();
 
       // Show custom confirmation instead of window.confirm
       setShowConfirm(true);

@@ -10,6 +10,8 @@ import { pool } from './config/database';
 // Import routes
 import authRoutes from './routes/auth';
 import inventoryRoutes from './routes/inventory';
+import customerRoutes from './routes/customer';
+import supplierRoutes from './routes/supplier';
 
 dotenv.config();
 
@@ -28,6 +30,8 @@ app.use(express.json());
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/customer', customerRoutes);
+app.use('/api/supplier', supplierRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

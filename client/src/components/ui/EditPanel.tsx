@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { apiUpdateInventoryItem, apiDeleteInventoryItem, apiGetClassifications } from '../../lib/inventoryApi';
+import { apiUpdateCustomer, apiDeleteCustomer } from '../../lib/customerApi';
+import { apiUpdateSupplier, apiDeleteSupplier } from '../../lib/supplierApi';
 import ConfirmationDialog from './ConfirmationDialog';
 
 // ==============================================
@@ -250,42 +252,70 @@ const EditPanel: React.FC<EditPanelProps> = ({
         if (!result.success) {
           throw new Error(result.message || 'Failed to update item');
         }
-      } else if (entityType === 'customer' || entityType === 'supplier') {
-        const tableName = entityType === 'customer' ? 'customer' : 'supplier';
-        const idField = entityType === 'customer' ? 'customer_id' : 'supplier_id';
-        const mainIdValue = data[idField];
+      } else if (entityType === 'customer') {
+        // Call backend API for customer (automatically creates log entry)
+        const result = await apiUpdateCustomer({
+          customer_id: data.customer_id,
+          company_name: mainData.company_name,
+          control_ac: mainData.control_ac,
+          branch_name: mainData.branch_name,
+          industry_name: mainData.industry_name,
+          industry_code: mainData.industry_code,
+          register_no_new: mainData.register_no_new,
+          register_no_old: mainData.register_no_old,
+          status: mainData.status,
+        });
 
-        // Update main table with all fields (including extra ones like control_ac, branch_name, etc.)
-        const { error: mainError } = await supabase
-          .from(tableName)
-          .update({
-            company_name: mainData.company_name,
-            control_ac: mainData.control_ac || null,
-            branch_name: mainData.branch_name || null,
-            industry_name: mainData.industry_name || null,
-            industry_code: mainData.industry_code || null,
-            register_no_new: mainData.register_no_new || null,
-            register_no_old: mainData.register_no_old || null,
-            status: mainData.status || null,
-          })
-          .eq(idField, mainIdValue);
-        if (mainError) throw mainError;
+        if (!result.success) throw new Error(result.message || 'Failed to update customer');
 
-        // Upsert related records (bank, contact, tax, liabilities)
+        // Handle related tables via Supabase (keep frontend for related data)
         if (bankData) {
-          const newBankId = await upsertRecord('bank_acc', 'bank_id', data.bank_id, bankData, 'bank_id', mainIdValue);
+          const newBankId = await upsertRecord('bank_acc', 'bank_id', data.bank_id, bankData, 'bank_id', data.customer_id);
           if (newBankId !== data.bank_id) data.bank_id = newBankId;
         }
         if (contactData) {
-          const newContactId = await upsertRecord('contact_info', 'contact_id', data.contact_id, contactData, 'contact_id', mainIdValue);
+          const newContactId = await upsertRecord('contact_info', 'contact_id', data.contact_id, contactData, 'contact_id', data.customer_id);
           if (newContactId !== data.contact_id) data.contact_id = newContactId;
         }
         if (taxData) {
-          const newTaxId = await upsertRecord('tax', 'tax_id', data.tax_id, taxData, 'tax_id', mainIdValue);
+          const newTaxId = await upsertRecord('tax', 'tax_id', data.tax_id, taxData, 'tax_id', data.customer_id);
           if (newTaxId !== data.tax_id) data.tax_id = newTaxId;
         }
         if (liabilitiesData) {
-          const newLiabId = await upsertRecord('liabilities', 'liabilities_id', data.liabilities_id, liabilitiesData, 'liabilities_id', mainIdValue);
+          const newLiabId = await upsertRecord('liabilities', 'liabilities_id', data.liabilities_id, liabilitiesData, 'liabilities_id', data.customer_id);
+          if (newLiabId !== data.liabilities_id) data.liabilities_id = newLiabId;
+        }
+      } else if (entityType === 'supplier') {
+        // Call backend API for supplier (automatically creates log entry)
+        const result = await apiUpdateSupplier({
+          supplier_id: data.supplier_id,
+          company_name: mainData.company_name,
+          control_ac: mainData.control_ac,
+          branch_name: mainData.branch_name,
+          industry_name: mainData.industry_name,
+          industry_code: mainData.industry_code,
+          register_no_new: mainData.register_no_new,
+          register_no_old: mainData.register_no_old,
+          status: mainData.status,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update supplier');
+
+        // Handle related tables via Supabase (keep frontend for related data)
+        if (bankData) {
+          const newBankId = await upsertRecord('bank_acc', 'bank_id', data.bank_id, bankData, 'bank_id', data.supplier_id);
+          if (newBankId !== data.bank_id) data.bank_id = newBankId;
+        }
+        if (contactData) {
+          const newContactId = await upsertRecord('contact_info', 'contact_id', data.contact_id, contactData, 'contact_id', data.supplier_id);
+          if (newContactId !== data.contact_id) data.contact_id = newContactId;
+        }
+        if (taxData) {
+          const newTaxId = await upsertRecord('tax', 'tax_id', data.tax_id, taxData, 'tax_id', data.supplier_id);
+          if (newTaxId !== data.tax_id) data.tax_id = newTaxId;
+        }
+        if (liabilitiesData) {
+          const newLiabId = await upsertRecord('liabilities', 'liabilities_id', data.liabilities_id, liabilitiesData, 'liabilities_id', data.supplier_id);
           if (newLiabId !== data.liabilities_id) data.liabilities_id = newLiabId;
         }
       }
@@ -322,18 +352,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
           throw new Error(result.message || 'Failed to delete item');
         }
       } else if (entityType === 'customer') {
-        // Customer/supplier still use direct Supabase (TODO: refactor to backend API)
-        const { error } = await supabase
-          .from('customer')
-          .delete()
-          .eq('customer_id', data.customer_id);
-        if (error) throw error;
+        // Call backend API for customer delete (automatically creates log entry)
+        const result = await apiDeleteCustomer(data.customer_id);
+        if (!result.success) throw new Error(result.message || 'Failed to delete customer');
       } else if (entityType === 'supplier') {
-        const { error } = await supabase
-          .from('supplier')
-          .delete()
-          .eq('supplier_id', data.supplier_id);
-        if (error) throw error;
+        // Call backend API for supplier delete (automatically creates log entry)
+        const result = await apiDeleteSupplier(data.supplier_id);
+        if (!result.success) throw new Error(result.message || 'Failed to delete supplier');
       }
 
       onDelete(); // Refresh list

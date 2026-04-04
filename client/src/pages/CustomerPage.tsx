@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { apiGetCustomers, apiCreateCustomer } from '../lib/customerApi';
 import FloatingActionMenu from '../components/ui/FloatingActionMenu';
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
-import EditPanel from '../components/ui/EditPanel'; // Import edit panel
+import EditPanel from '../components/ui/EditPanel';
 import { PlusIcon, UsersIcon, EditIcon } from '../components/ui/Icons';
 
 // ==============================================
@@ -65,29 +65,11 @@ const CustomerPage: React.FC = () => {
       setLoading(true);
       setError('');
 
-      // Fetch all fields needed for editing (including foreign keys)
-      const { data, error: fetchError } = await supabase
-        .from('customer')
-        .select(`
-          customer_id,
-          company_name,
-          industry_name,
-          industry_code,
-          register_no_new,
-          control_ac,
-          branch_name,
-          register_no_old,
-          status,
-          tax_id,
-          bank_id,
-          contact_id,
-          liabilities_id
-        `)
-        .order('customer_id', { ascending: true });
+      // Call backend API instead of Supabase directly
+      const result = await apiGetCustomers();
+      if (!result.success) throw new Error(result.message);
 
-      if (fetchError) throw fetchError;
-
-      setCustomers(data || []);
+      setCustomers(result.data || []);
     } catch (err: any) {
       setError(err.message);
       console.error('Error fetching customers:', err);
@@ -115,20 +97,18 @@ const CustomerPage: React.FC = () => {
     setError('');
 
     try {
-      const newCustomer = {
+      // Call backend API (automatically creates log entry)
+      const result = await apiCreateCustomer({
         company_name: formData.company_name,
         industry_name: formData.industry_name || null,
         industry_code: formData.industry_code || null,
         register_no_new: formData.register_no_new || null,
-      };
+      });
 
-      const { error: insertError } = await supabase
-        .from('customer')
-        .insert([newCustomer]);
+      if (!result.success) throw new Error(result.message);
 
-      if (insertError) throw insertError;
-
-      await fetchCustomers(); // Refresh the list
+      // Refresh list after successful creation
+      await fetchCustomers();
 
       // Show custom confirmation instead of window.confirm
       setShowConfirm(true);
