@@ -14,11 +14,9 @@ const Layout: React.FC<LayoutProps> = ({ children, navigationItems }) => {
         {/* Sidebar */}
         <Sidebar navigationItems={navigationItems} />
         
-        {/* Main Content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="min-h-full">
-            {children}
-          </div>
+        {/* Main Content – flex-col so each page can place its own header + scrollable content area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {children}
         </div>
       </div>
     </div>
