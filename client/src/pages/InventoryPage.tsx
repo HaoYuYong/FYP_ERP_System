@@ -21,13 +21,16 @@ import { EditIcon } from '../components/ui/Icons'; // Only EditIcon is needed; P
  * Extended with description and classification_id for editing.
  */
 interface InventoryItem {
-  item_id: number;          // Auto‑generated primary key
-  item_name: string;        // Name of the item (required)
-  serial_number?: string;   // Optional serial number
-  balance_qty?: number;     // Current stock quantity
-  uom?: string;             // Unit of measure (e.g., pcs, kg)
-  description?: string;     // Optional description (for edit panel)
-  classification_id?: number; // Optional classification (for edit panel)
+  item_id: number;              // Auto‑generated primary key
+  item_name: string;            // Name of the item (required)
+  classification_code?: string;  // Classification code joined from classification table (display only)
+  classification_title?: string; // Classification title joined from classification table (display only)
+  uom?: string;                 // Unit of measure (e.g., pcs, kg)
+  quantity?: number;            // Current quantity joined from quantity table
+  serial_number?: string;       // Optional serial number (used in edit panel)
+  balance_qty?: number;         // Opening balance quantity (used in edit panel)
+  description?: string;         // Optional description (used in edit panel)
+  classification_id?: number;   // FK to classification table (used in edit panel)
 }
 
 /**
@@ -535,13 +538,13 @@ const InventoryPage: React.FC = () => {
                             Item Name
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Serial Number
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Balance Qty
+                            Classification Code
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             UOM
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Quantity
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Actions
@@ -570,14 +573,18 @@ const InventoryPage: React.FC = () => {
                               <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
                                 {item.item_name}
                               </td>
+                              {/* Shows "CODE (Title)" when classification is assigned, or "—" when none */}
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {item.serial_number || '—'}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {item.balance_qty !== undefined ? item.balance_qty : '—'}
+                                {item.classification_code
+                                  ? `${item.classification_code} (${item.classification_title})`
+                                  : '—'}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {item.uom || '—'}
+                              </td>
+                              {/* quantity is null when no quantity record exists in the quantity table */}
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {item.quantity !== undefined && item.quantity !== null ? item.quantity : '—'}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {/* Edit icon opens the inventory item edit panel */}

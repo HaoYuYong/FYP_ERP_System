@@ -195,9 +195,26 @@ export const deleteInventoryItem = async (itemId: number, userId: string) => {
  */
 export const getInventoryItems = async () => {
   try {
-    const result = await pool.query(
-      'SELECT item_id, item_name, serial_number, balance_qty, uom, description, classification_id, log_id FROM inventory ORDER BY item_id ASC'
-    );
+    // LEFT JOIN classification to get classification_code for display
+    // LEFT JOIN quantity to get current quantity for display
+    const result = await pool.query(`
+      SELECT
+        i.item_id,
+        i.item_name,
+        c.classification_code,
+        c.classification_title,
+        i.uom,
+        q.quantity,
+        i.serial_number,
+        i.balance_qty,
+        i.description,
+        i.classification_id,
+        i.log_id
+      FROM inventory i
+      LEFT JOIN classification c ON i.classification_id = c.classification_id
+      LEFT JOIN quantity q ON i.item_id = q.item_id
+      ORDER BY i.item_id ASC
+    `);
     return result.rows;
   } catch (error) {
     console.error('Error fetching inventory items:', error);
