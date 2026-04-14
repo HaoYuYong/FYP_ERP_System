@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'; // useRef added for dropdown click-outside detection
+import React, { useEffect, useState, useRef } from 'react'; // useRef for dropdown click-outside detection
 // import FloatingActionMenu from '../components/ui/FloatingActionMenu'; // FAB commented out – kept for future use
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
 import EditPanel from '../components/ui/EditPanel';
@@ -7,6 +7,7 @@ import {
   apiGetInventoryItems,
   apiCreateInventoryItem,
   apiCreateClassification,
+  apiGetClassifications,
 } from '../lib/inventoryApi';
 import { EditIcon } from '../components/ui/Icons'; // Only EditIcon is needed; PlusIcon/ItemIcon/CIcon were for the FAB
 
@@ -29,6 +30,17 @@ interface InventoryItem {
   classification_id?: number; // Optional classification (for edit panel)
 }
 
+/**
+ * Classification Interface
+ * Matches the structure of the classification table for the classification view.
+ */
+interface Classification {
+  classification_id: number;       // Auto-generated primary key
+  classification_code: string;     // Short identifier (e.g., "CAT-01")
+  classification_title: string;    // Human-readable name
+  classification_description?: string; // Optional long-form details
+}
+
 // ==============================================
 // COMPONENT
 // ==============================================
@@ -38,18 +50,29 @@ const InventoryPage: React.FC = () => {
   // STATE VARIABLES
   // ==============================================
 
+  // Controls which table is displayed: inventory items or classifications
+  const [currentView, setCurrentView] = useState<'inventory' | 'classification'>('inventory');
+
   // Inventory items state
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Classifications list state (for the classification view table)
+  const [classifications, setClassifications] = useState<Classification[]>([]);
+  const [loadingClass, setLoadingClass] = useState(false);
+
   // Modal visibility states
   const [showItemModal, setShowItemModal] = useState(false);
   const [showClassModal, setShowClassModal] = useState(false);
 
-  // Edit panel state
+  // Inventory item edit panel state
   const [showEditPanel, setShowEditPanel] = useState(false);        // Controls edit panel visibility
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null); // Item being edited
+
+  // Classification edit panel state
+  const [showClassEditPanel, setShowClassEditPanel] = useState(false);          // Controls classification edit panel visibility
+  const [selectedClass, setSelectedClass] = useState<Classification | null>(null); // Classification being edited
 
   // Form data for adding a new item
   const [itemFormData, setItemFormData] = useState({
@@ -75,8 +98,13 @@ const InventoryPage: React.FC = () => {
 
   // Controls visibility of the "Add New" dropdown in the header
   const [showAddMenu, setShowAddMenu] = useState(false);
-  // Ref attached to the dropdown container to detect outside clicks and close it
+  // Ref attached to the Add New dropdown container to detect outside clicks
   const addMenuRef = useRef<HTMLDivElement>(null);
+
+  // Controls visibility of the "Change View" dropdown in the header
+  const [showChangeViewMenu, setShowChangeViewMenu] = useState(false);
+  // Ref attached to the Change View dropdown container to detect outside clicks
+  const changeViewMenuRef = useRef<HTMLDivElement>(null);
 
   // ==============================================
   // FETCH INVENTORY ITEMS
@@ -104,7 +132,33 @@ const InventoryPage: React.FC = () => {
     }
   };
 
-  // Fetch items once when component mounts
+  // ==============================================
+  // FETCH CLASSIFICATIONS (for classification view)
+  // ==============================================
+  /**
+   * fetchClassifications – retrieves all classifications via backend API for the classification view table.
+   */
+  const fetchClassifications = async () => {
+    try {
+      setLoadingClass(true);
+      setError('');
+
+      const result = await apiGetClassifications();
+
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to fetch classifications');
+      }
+
+      setClassifications(result.data || []);
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error fetching classifications:', err);
+    } finally {
+      setLoadingClass(false);
+    }
+  };
+
+  // Fetch inventory items once when component mounts (default view is inventory)
   useEffect(() => {
     fetchItems();
   }, []);
@@ -114,6 +168,17 @@ const InventoryPage: React.FC = () => {
     const handleClickOutside = (event: MouseEvent) => {
       if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
         setShowAddMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside); // Cleanup listener on unmount
+  }, []);
+
+  // Close the "Change View" dropdown when user clicks anywhere outside its container
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (changeViewMenuRef.current && !changeViewMenuRef.current.contains(event.target as Node)) {
+        setShowChangeViewMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -207,6 +272,11 @@ const InventoryPage: React.FC = () => {
         throw new Error(result.message || 'Failed to create classification');
       }
 
+      // Refresh classification list if currently in classification view
+      if (currentView === 'classification') {
+        await fetchClassifications();
+      }
+
       // Show custom confirmation
       setShowClassConfirm(true);
     } catch (err: any) {
@@ -247,7 +317,7 @@ const InventoryPage: React.FC = () => {
   };
 
   // ==============================================
-  // EDIT HANDLERS
+  // INVENTORY ITEM EDIT HANDLERS
   // ==============================================
   /**
    * handleEditClick – opens the edit panel with the selected item's data.
@@ -272,6 +342,31 @@ const InventoryPage: React.FC = () => {
   };
 
   // ==============================================
+  // CLASSIFICATION EDIT HANDLERS
+  // ==============================================
+  /**
+   * handleClassEditClick – opens the edit panel with the selected classification's data.
+   */
+  const handleClassEditClick = (cls: Classification) => {
+    setSelectedClass(cls);
+    setShowClassEditPanel(true);
+  };
+
+  /**
+   * handleClassUpdateSuccess – callback after a classification is updated; refreshes the classification list.
+   */
+  const handleClassUpdateSuccess = () => {
+    fetchClassifications(); // Refresh classification table after update
+  };
+
+  /**
+   * handleClassDeleteSuccess – callback after a classification is deleted; refreshes the classification list.
+   */
+  const handleClassDeleteSuccess = () => {
+    fetchClassifications(); // Refresh classification table after delete
+  };
+
+  // ==============================================
   // RENDER
   // ==============================================
   return (
@@ -280,12 +375,73 @@ const InventoryPage: React.FC = () => {
 
       {/* ============================================== */}
       {/* PAGE HEADER (reusable PageHeader component)    */}
-      {/* onRefresh wires the Refresh List button        */}
-      {/* The Add New dropdown is passed as children     */}
+      {/* title changes based on which view is active   */}
+      {/* onRefresh calls the appropriate fetch function */}
+      {/* Children slot holds Change View + Add New      */}
       {/* ============================================== */}
-      <PageHeader title="Inventory Management" onRefresh={fetchItems}>
+      <PageHeader
+        title={currentView === 'inventory' ? 'Inventory Management' : 'Inventory Management - Classification'}
+        onRefresh={currentView === 'inventory' ? fetchItems : fetchClassifications}
+      >
 
-        {/* Add New dropdown container – click outside closes the dropdown */}
+        {/* ============================================== */}
+        {/* CHANGE VIEW DROPDOWN                           */}
+        {/* Switches between Inventory table and          */}
+        {/* Classification table without leaving the page  */}
+        {/* ============================================== */}
+        <div className="relative" ref={changeViewMenuRef}>
+          {/* Change View toggle button – clicking opens/closes the view selection dropdown */}
+          <button
+            onClick={() => setShowChangeViewMenu((prev) => !prev)}
+            className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors flex items-center"
+          >
+            {/* Grid/view icon */}
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            Change View
+            {/* Chevron-down icon signals dropdown */}
+            <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {/* Change View dropdown menu – w-full matches button width exactly */}
+          {showChangeViewMenu && (
+            <div className="absolute right-0 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg z-30 overflow-hidden">
+              {/* Option: switch to inventory items table */}
+              <button
+                onClick={() => { setCurrentView('inventory'); setShowChangeViewMenu(false); }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+              >
+                {/* Box/package icon for inventory */}
+                <svg className="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0v10l-8 4-8-4V7m8 4v10" />
+                </svg>
+                Inventory
+              </button>
+              {/* Divider line between the two options */}
+              <div className="border-t border-gray-200" />
+              {/* Option: switch to classification view; fetches classification data on click */}
+              <button
+                onClick={() => { setCurrentView('classification'); fetchClassifications(); setShowChangeViewMenu(false); }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+              >
+                {/* Document icon for classification */}
+                <svg className="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Classification
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ============================================== */}
+        {/* ADD NEW DROPDOWN                               */}
+        {/* Provides options to add an Item or            */}
+        {/* Classification via modal form                  */}
+        {/* ============================================== */}
         <div className="relative" ref={addMenuRef}>
           {/* Add New toggle button – clicking opens/closes the dropdown menu */}
           <button
@@ -347,95 +503,186 @@ const InventoryPage: React.FC = () => {
           </div>
         )}
 
-        {/* Loading spinner */}
-        {loading ? (
+        {/* Loading spinner – shown for whichever view is currently loading */}
+        {(currentView === 'inventory' && loading) || (currentView === 'classification' && loadingClass) ? (
           <div className="flex items-center justify-center p-8">
             <svg className="animate-spin h-8 w-8 text-primary-600" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            <span className="ml-3 text-gray-600">Loading inventory...</span>
+            {/* Loading message reflects which view is loading */}
+            <span className="ml-3 text-gray-600">
+              {currentView === 'inventory' ? 'Loading inventory...' : 'Loading classifications...'}
+            </span>
           </div>
         ) : (
           <>
-            {/* Inventory Table Container */}
-            <div className="bg-white shadow-md rounded-lg overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Item ID
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Item Name
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Serial Number
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Balance Qty
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        UOM
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {items.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5 0a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
-                          </svg>
-                          <p className="mt-2">No items found</p>
-                          <p className="text-sm mt-1">Click the "Add New" button above to add an item.</p>
-                        </td>
-                      </tr>
-                    ) : (
-                      items.map((item) => (
-                        <tr key={item.item_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-6 py-4 whitespace-nowrap font-mono text-sm text-gray-600">
-                            {item.item_id}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
-                            {item.item_name}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {item.serial_number || '—'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {item.balance_qty !== undefined ? item.balance_qty : '—'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {item.uom || '—'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <button
-                              onClick={() => handleEditClick(item)}
-                              className="text-primary-600 hover:text-primary-800 transition-colors"
-                              title="Edit item"
-                            >
-                              <EditIcon className="w-5 h-5" />
-                            </button>
-                          </td>
+            {/* ============================================== */}
+            {/* INVENTORY TABLE                                */}
+            {/* Shown only when currentView === 'inventory'   */}
+            {/* ============================================== */}
+            {currentView === 'inventory' && (
+              <>
+                <div className="bg-white shadow-md rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Item ID
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Item Name
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Serial Number
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Balance Qty
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            UOM
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                          </th>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {items.length === 0 ? (
+                          // Empty state when no inventory items exist
+                          <tr>
+                            <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                              <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5 0a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
+                              </svg>
+                              <p className="mt-2">No items found</p>
+                              <p className="text-sm mt-1">Click the "Add New" button above to add an item.</p>
+                            </td>
+                          </tr>
+                        ) : (
+                          // Render one row per inventory item
+                          items.map((item) => (
+                            <tr key={item.item_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-6 py-4 whitespace-nowrap font-mono text-sm text-gray-600">
+                                {item.item_id}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
+                                {item.item_name}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {item.serial_number || '—'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {item.balance_qty !== undefined ? item.balance_qty : '—'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {item.uom || '—'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {/* Edit icon opens the inventory item edit panel */}
+                                <button
+                                  onClick={() => handleEditClick(item)}
+                                  className="text-primary-600 hover:text-primary-800 transition-colors"
+                                  title="Edit item"
+                                >
+                                  <EditIcon className="w-5 h-5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
 
-            {/* Footer summary – shows total count of loaded inventory items */}
-            <div className="mt-4">
-              <div className="text-sm text-gray-600">
-                {items.length} item{items.length !== 1 ? 's' : ''} found
-              </div>
-            </div>
+                {/* Footer summary – shows total count of loaded inventory items */}
+                <div className="mt-4">
+                  <div className="text-sm text-gray-600">
+                    {items.length} item{items.length !== 1 ? 's' : ''} found
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ============================================== */}
+            {/* CLASSIFICATION TABLE                           */}
+            {/* Shown only when currentView === 'classification' */}
+            {/* ============================================== */}
+            {currentView === 'classification' && (
+              <>
+                <div className="bg-white shadow-md rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Classification Code
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Classification Title
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Description
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {classifications.length === 0 ? (
+                          // Empty state when no classifications exist
+                          <tr>
+                            <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
+                              <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <p className="mt-2">No classifications found</p>
+                              <p className="text-sm mt-1">Click "Add New" → "Classification" above to create one.</p>
+                            </td>
+                          </tr>
+                        ) : (
+                          // Render one row per classification
+                          classifications.map((cls) => (
+                            <tr key={cls.classification_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-6 py-4 whitespace-nowrap font-mono text-sm text-gray-600">
+                                {cls.classification_code}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
+                                {cls.classification_title}
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-500">
+                                {/* Show em-dash when description is absent */}
+                                {cls.classification_description || '—'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {/* Edit icon opens the classification edit panel */}
+                                <button
+                                  onClick={() => handleClassEditClick(cls)}
+                                  className="text-primary-600 hover:text-primary-800 transition-colors"
+                                  title="Edit classification"
+                                >
+                                  <EditIcon className="w-5 h-5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Footer summary – shows total count of loaded classifications */}
+                <div className="mt-4">
+                  <div className="text-sm text-gray-600">
+                    {classifications.length} classification{classifications.length !== 1 ? 's' : ''} found
+                  </div>
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -568,7 +815,7 @@ const InventoryPage: React.FC = () => {
         )}
 
         {/* ============================================== */}
-        {/* MODAL: ADD NEW CLASSIFICATION (hidden view)    */}
+        {/* MODAL: ADD NEW CLASSIFICATION                  */}
         {/* ============================================== */}
         {showClassModal && (
           <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
@@ -658,7 +905,8 @@ const InventoryPage: React.FC = () => {
         )}
 
         {/* ============================================== */}
-        {/* EDIT PANEL                                      */}
+        {/* EDIT PANEL: INVENTORY ITEM                     */}
+        {/* Opens when user clicks edit icon on item row  */}
         {/* ============================================== */}
         <EditPanel
           isOpen={showEditPanel}
@@ -667,6 +915,20 @@ const InventoryPage: React.FC = () => {
           data={selectedItem}
           onUpdate={handleUpdateSuccess}
           onDelete={handleDeleteSuccess}
+        />
+
+        {/* ============================================== */}
+        {/* EDIT PANEL: CLASSIFICATION                     */}
+        {/* Opens when user clicks edit icon on           */}
+        {/* classification row; single Main tab only      */}
+        {/* ============================================== */}
+        <EditPanel
+          isOpen={showClassEditPanel}
+          onClose={() => setShowClassEditPanel(false)}
+          entityType="classification"
+          data={selectedClass}
+          onUpdate={handleClassUpdateSuccess}
+          onDelete={handleClassDeleteSuccess}
         />
 
         {/* ============================================== */}

@@ -222,6 +222,86 @@ export const apiGetClassifications = async (): Promise<ApiResponse<any[]>> => {
 };
 
 /**
+ * Update classification via backend (automatically logged).
+ */
+export const apiUpdateClassification = async (payload: {
+  classification_id: number;
+  classification_code?: string;
+  classification_title?: string;
+  classification_description?: string;
+}): Promise<ApiResponse<any>> => {
+  try {
+    const userId = await getUserId();
+    const response = await fetch(`${API_URL}/inventory/classification/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': userId,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data.message || 'Failed to update classification',
+      };
+    }
+
+    return {
+      success: true,
+      message: data.message,
+      data: data.data,
+    };
+  } catch (error: any) {
+    console.error('Error updating classification:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to update classification',
+    };
+  }
+};
+
+/**
+ * Delete classification via backend (automatically logged).
+ */
+export const apiDeleteClassification = async (classificationId: number): Promise<ApiResponse<void>> => {
+  try {
+    const userId = await getUserId();
+    const response = await fetch(`${API_URL}/inventory/classification/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': userId,
+      },
+      body: JSON.stringify({ classification_id: classificationId }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data.message || 'Failed to delete classification',
+      };
+    }
+
+    return {
+      success: true,
+      message: data.message,
+    };
+  } catch (error: any) {
+    console.error('Error deleting classification:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to delete classification',
+    };
+  }
+};
+
+/**
  * Create new classification via backend (automatically logged).
  */
 export const apiCreateClassification = async (payload: {

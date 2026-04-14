@@ -5,7 +5,12 @@ import {
   deleteInventoryItem,
   getInventoryItems,
 } from '../services/inventory.service';
-import { createClassification, getClassifications } from '../services/classification.service';
+import {
+  createClassification,
+  updateClassification,
+  deleteClassification,
+  getClassifications,
+} from '../services/classification.service';
 
 const router = express.Router();
 
@@ -219,6 +224,79 @@ router.post('/classification/create', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to create classification: ' + error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/inventory/classification/update
+ * Update classification with logging.
+ */
+router.post('/classification/update', async (req: Request, res: Response) => {
+  try {
+    const { classification_id, classification_code, classification_title, classification_description } = req.body;
+    const userId = req.headers['x-user-id'] as string || 'anonymous';
+
+    // Validate required identifier
+    if (!classification_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Classification ID is required',
+      });
+    }
+
+    const updatedClass = await updateClassification(
+      classification_id,
+      {
+        ...(classification_code !== undefined ? { classification_code } : {}),
+        ...(classification_title !== undefined ? { classification_title } : {}),
+        ...(classification_description !== undefined ? { classification_description } : {}),
+      },
+      userId
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Classification updated successfully',
+      data: updatedClass,
+    });
+  } catch (error: any) {
+    console.error('Error updating classification:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update classification: ' + error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/inventory/classification/delete
+ * Delete classification with logging.
+ */
+router.post('/classification/delete', async (req: Request, res: Response) => {
+  try {
+    const { classification_id } = req.body;
+    const userId = req.headers['x-user-id'] as string || 'anonymous';
+
+    // Validate required identifier
+    if (!classification_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Classification ID is required',
+      });
+    }
+
+    await deleteClassification(classification_id, userId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Classification deleted successfully',
+    });
+  } catch (error: any) {
+    console.error('Error deleting classification:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete classification: ' + error.message,
     });
   }
 });

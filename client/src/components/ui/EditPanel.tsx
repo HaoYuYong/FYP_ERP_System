@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { apiUpdateInventoryItem, apiDeleteInventoryItem, apiGetClassifications } from '../../lib/inventoryApi';
+import {
+  apiUpdateInventoryItem,
+  apiDeleteInventoryItem,
+  apiGetClassifications,
+  apiUpdateClassification,
+  apiDeleteClassification,
+} from '../../lib/inventoryApi';
 import { apiUpdateCustomer, apiDeleteCustomer } from '../../lib/customerApi';
 import { apiUpdateSupplier, apiDeleteSupplier } from '../../lib/supplierApi';
 import ConfirmationDialog from './ConfirmationDialog';
@@ -13,7 +19,7 @@ import ConfirmationDialog from './ConfirmationDialog';
 interface EditPanelProps {
   isOpen: boolean;                    // Whether panel is visible
   onClose: () => void;                // Close panel (without saving)
-  entityType: 'inventory' | 'customer' | 'supplier'; // Type of entity being edited
+  entityType: 'inventory' | 'customer' | 'supplier' | 'classification'; // Type of entity being edited
   data: any;                          // Current entity data (from table row)
   onUpdate: () => void;               // Callback after successful update
   onDelete: () => void;               // Callback after successful delete
@@ -88,6 +94,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
         // Fetch related records (bank, contact, tax, liabilities) using foreign keys
         fetchRelatedData();
       }
+      // entityType === 'classification': mainData is all that's needed, no extra fetches
     }
   }, [isOpen, data, entityType]);
 
@@ -318,6 +325,16 @@ const EditPanel: React.FC<EditPanelProps> = ({
           const newLiabId = await upsertRecord('liabilities', 'liabilities_id', data.liabilities_id, liabilitiesData, 'liabilities_id', data.supplier_id);
           if (newLiabId !== data.liabilities_id) data.liabilities_id = newLiabId;
         }
+      } else if (entityType === 'classification') {
+        // Call backend API for classification (automatically creates log entry)
+        const result = await apiUpdateClassification({
+          classification_id: data.classification_id,
+          classification_code: mainData.classification_code,
+          classification_title: mainData.classification_title,
+          classification_description: mainData.classification_description || undefined,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update classification');
       }
 
       // Refresh parent list
@@ -359,6 +376,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
         // Call backend API for supplier delete (automatically creates log entry)
         const result = await apiDeleteSupplier(data.supplier_id);
         if (!result.success) throw new Error(result.message || 'Failed to delete supplier');
+      } else if (entityType === 'classification') {
+        // Call backend API for classification delete (automatically creates log entry)
+        const result = await apiDeleteClassification(data.classification_id);
+        if (!result.success) throw new Error(result.message || 'Failed to delete classification');
       }
 
       onDelete(); // Refresh list
@@ -378,6 +399,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
   const isInventory = entityType === 'inventory';
   const isCustomerSupplier = entityType === 'customer' || entityType === 'supplier';
+  const isClassification = entityType === 'classification'; // Single-tab edit for classification records
 
   return (
     <>
@@ -385,8 +407,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
         <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
           {/* Header */}
           <div className="flex justify-between items-center mb-4">
+            {/* Panel title changes based on which entity type is being edited */}
             <h2 className="text-xl font-semibold">
-              Edit {entityType === 'inventory' ? 'Item' : entityType === 'customer' ? 'Customer' : 'Supplier'}
+              Edit {entityType === 'inventory' ? 'Item' : entityType === 'customer' ? 'Customer' : entityType === 'supplier' ? 'Supplier' : 'Classification'}
             </h2>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -541,6 +564,43 @@ const EditPanel: React.FC<EditPanelProps> = ({
                       <textarea
                         value={mainData.description || ''}
                         onChange={(e) => setMainData({ ...mainData, description: e.target.value })}
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                  </>
+                )}
+                {isClassification && (
+                  <>
+                    {/* Classification code – short identifier like "CAT-01" */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Classification Code *</label>
+                      <input
+                        type="text"
+                        value={mainData.classification_code || ''}
+                        onChange={(e) => setMainData({ ...mainData, classification_code: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    {/* Classification title – human-readable name */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Classification Title *</label>
+                      <input
+                        type="text"
+                        value={mainData.classification_title || ''}
+                        onChange={(e) => setMainData({ ...mainData, classification_title: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    {/* Classification description – optional long-form details */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                      <textarea
+                        value={mainData.classification_description || ''}
+                        onChange={(e) => setMainData({ ...mainData, classification_description: e.target.value })}
                         rows={3}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                         disabled={loading}
