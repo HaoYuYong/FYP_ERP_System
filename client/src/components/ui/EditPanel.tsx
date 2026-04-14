@@ -253,6 +253,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
           balance_qty: mainData.balance_qty ? parseFloat(mainData.balance_qty) : undefined,
           uom: mainData.uom || undefined,
           description: mainData.description || undefined,
+          ref_cost: mainData.ref_cost ? parseFloat(mainData.ref_cost) : undefined,
+          ref_price: mainData.ref_price ? parseFloat(mainData.ref_price) : undefined,
+          remark_1: mainData.remark_1 || undefined,
+          remark_2: mainData.remark_2 || undefined,
           classification_id: selectedClassId || undefined,
         });
 
@@ -517,6 +521,16 @@ const EditPanel: React.FC<EditPanelProps> = ({
               <div className="space-y-4">
                 {isInventory && (
                   <>
+                    {/* Item ID – read-only, shown for reference only */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                      <input
+                        type="text"
+                        value={mainData.item_id || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
                       <input
@@ -537,34 +551,35 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         disabled={loading}
                       />
                     </div>
+                    {/* Remark 1 – free-text note field for internal use */}
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Balance Quantity</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={mainData.balance_qty || ''}
-                        onChange={(e) => setMainData({ ...mainData, balance_qty: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remark 1</label>
                       <input
                         type="text"
-                        value={mainData.uom || ''}
-                        onChange={(e) => setMainData({ ...mainData, uom: e.target.value })}
+                        value={mainData.remark_1 || ''}
+                        onChange={(e) => setMainData({ ...mainData, remark_1: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                         disabled={loading}
-                        placeholder="e.g., pcs, kg, box"
                       />
                     </div>
+                    {/* Remark 2 – second free-text note field for internal use */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remark 2</label>
+                      <input
+                        type="text"
+                        value={mainData.remark_2 || ''}
+                        onChange={(e) => setMainData({ ...mainData, remark_2: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    {/* Description – rows={9} makes it 3× taller than a standard single-row input */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                       <textarea
                         value={mainData.description || ''}
                         onChange={(e) => setMainData({ ...mainData, description: e.target.value })}
-                        rows={3}
+                        rows={9}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                         disabled={loading}
                       />
@@ -702,6 +717,55 @@ const EditPanel: React.FC<EditPanelProps> = ({
                   <div className="text-center py-4">Loading quantity data...</div>
                 ) : (
                   <>
+                    {/* UOM – unit of measure for this item (e.g., pcs, kg, box) */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                      <input
+                        type="text"
+                        value={mainData.uom || ''}
+                        onChange={(e) => setMainData({ ...mainData, uom: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                        placeholder="e.g., pcs, kg, box"
+                      />
+                    </div>
+                    {/* Ref Cost – reference cost used for pricing, stored as decimal */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ref Cost</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={mainData.ref_cost || ''}
+                        onChange={(e) => setMainData({ ...mainData, ref_cost: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    {/* Ref Price – reference price used for pricing, stored as decimal */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ref Price</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={mainData.ref_price || ''}
+                        onChange={(e) => setMainData({ ...mainData, ref_price: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    {/* Balance Quantity – opening stock balance stored on the inventory table */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Balance Quantity</label>
+                      <input
+                        type="number"
+                        step="any"
+                        value={mainData.balance_qty || ''}
+                        onChange={(e) => setMainData({ ...mainData, balance_qty: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading}
+                      />
+                    </div>
+                    {/* Quantity – live tracked stock count from the quantity table */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                       <input
@@ -713,6 +777,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         disabled={loading}
                       />
                     </div>
+                    {/* Invoice ID – reference to the invoice linked to this quantity record */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Invoice ID</label>
                       <input

@@ -78,6 +78,10 @@ export const updateInventoryItem = async (
     balance_qty?: number;
     uom?: string;
     description?: string;
+    ref_cost?: number;
+    ref_price?: number;
+    remark_1?: string;
+    remark_2?: string;
     classification_id?: number;
   },
   userId: string
@@ -111,6 +115,22 @@ export const updateInventoryItem = async (
     if (data.description !== undefined) {
       updateFields.push(`description = $${paramCount++}`);
       updateValues.push(data.description);
+    }
+    if (data.ref_cost !== undefined) {
+      updateFields.push(`ref_cost = $${paramCount++}`);
+      updateValues.push(data.ref_cost);
+    }
+    if (data.ref_price !== undefined) {
+      updateFields.push(`ref_price = $${paramCount++}`);
+      updateValues.push(data.ref_price);
+    }
+    if (data.remark_1 !== undefined) {
+      updateFields.push(`remark_1 = $${paramCount++}`);
+      updateValues.push(data.remark_1);
+    }
+    if (data.remark_2 !== undefined) {
+      updateFields.push(`remark_2 = $${paramCount++}`);
+      updateValues.push(data.remark_2);
     }
     if (data.classification_id !== undefined) {
       updateFields.push(`classification_id = $${paramCount++}`);
@@ -208,6 +228,10 @@ export const getInventoryItems = async () => {
         i.serial_number,
         i.balance_qty,
         i.description,
+        i.ref_cost,
+        i.ref_price,
+        i.remark_1,
+        i.remark_2,
         i.classification_id,
         i.log_id
       FROM inventory i

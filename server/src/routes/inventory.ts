@@ -87,7 +87,7 @@ router.post('/create', async (req: Request, res: Response) => {
  */
 router.post('/update', async (req: Request, res: Response) => {
   try {
-    const { item_id, item_name, serial_number, balance_qty, uom, description, classification_id } = req.body;
+    const { item_id, item_name, serial_number, balance_qty, uom, description, ref_cost, ref_price, remark_1, remark_2, classification_id } = req.body;
     const userId = req.headers['x-user-id'] as string || 'anonymous';
 
     // Validate item_id
@@ -106,6 +106,10 @@ router.post('/update', async (req: Request, res: Response) => {
         ...(balance_qty !== undefined ? { balance_qty: parseFloat(balance_qty) } : {}),
         ...(uom ? { uom } : {}),
         ...(description ? { description } : {}),
+        ...(ref_cost !== undefined ? { ref_cost: parseFloat(ref_cost) } : {}),
+        ...(ref_price !== undefined ? { ref_price: parseFloat(ref_price) } : {}),
+        ...(remark_1 !== undefined ? { remark_1 } : {}),
+        ...(remark_2 !== undefined ? { remark_2 } : {}),
         ...(classification_id ? { classification_id } : {}),
       },
       userId

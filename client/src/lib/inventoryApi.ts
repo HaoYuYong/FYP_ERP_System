@@ -31,6 +31,10 @@ export interface UpdateInventoryPayload {
   balance_qty?: number;
   uom?: string;
   description?: string;
+  ref_cost?: number;
+  ref_price?: number;
+  remark_1?: string;
+  remark_2?: string;
   classification_id?: number;
 }
 
