@@ -6,8 +6,8 @@ import React from 'react';
 
 interface PageHeaderProps {
   title: string;                    // Page title shown on the left side of the header
-  onRefresh?: () => void;           // If provided, a Refresh List button is rendered on the right
-  children?: React.ReactNode;       // Slot for additional action buttons placed to the right of Refresh
+  onRefresh?: () => void;           // If provided, a Refresh List button is rendered at the far right
+  children?: React.ReactNode;       // Slot for additional action buttons placed to the left of Refresh
 }
 
 // ==============================================
@@ -20,7 +20,7 @@ interface PageHeaderProps {
  * Layout: title on the left, action buttons on the right.
  * Usage:
  *   <PageHeader title="Inventory Management" onRefresh={fetchItems}>
- *     <SomeExtraButton />   ← passed as children, appears after Refresh
+ *     <SomeExtraButton />   ← passed as children, appears before Refresh List
  *   </PageHeader>
  *
  * flex-shrink-0 prevents the header from shrinking inside a flex-column parent,
@@ -37,7 +37,10 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, onRefresh, children }) =
       {/* Right-side action buttons container */}
       <div className="flex items-center space-x-3">
 
-        {/* Refresh List button – only rendered when onRefresh prop is supplied */}
+        {/* Additional action buttons (e.g., Change View, Add New dropdowns) passed in from the page */}
+        {children}
+
+        {/* Refresh List button – only rendered when onRefresh prop is supplied; always at the far right */}
         {onRefresh && (
           <button
             onClick={onRefresh}
@@ -50,9 +53,6 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, onRefresh, children }) =
             Refresh List
           </button>
         )}
-
-        {/* Additional action buttons (e.g., Add New dropdown) passed in from the page */}
-        {children}
 
       </div>
     </div>
