@@ -216,7 +216,6 @@ export const deleteInventoryItem = async (itemId: number, userId: string) => {
 export const getInventoryItems = async () => {
   try {
     // LEFT JOIN classification to get classification_code for display
-    // LEFT JOIN quantity to get current quantity for display
     const result = await pool.query(`
       SELECT
         i.item_id,
@@ -224,7 +223,7 @@ export const getInventoryItems = async () => {
         c.classification_code,
         c.classification_title,
         i.uom,
-        q.quantity,
+        i.quantity,
         i.serial_number,
         i.balance_qty,
         i.description,
@@ -236,7 +235,6 @@ export const getInventoryItems = async () => {
         i.log_id
       FROM inventory i
       LEFT JOIN classification c ON i.classification_id = c.classification_id
-      LEFT JOIN quantity q ON i.item_id = q.item_id
       ORDER BY i.item_id ASC
     `);
     return result.rows;

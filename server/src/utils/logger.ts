@@ -5,7 +5,7 @@ export interface LogEntry {
   tableId: number;
   recordId: string;
   actionType: 'INSERT' | 'UPDATE' | 'DELETE';
-  actionBy: string; // UUID of the user who performed the action
+  actionBy: string | null; // UUID of the user, or null when no authenticated user
   changedData?: any; // Optional: store before/after values as JSON
 }
 
@@ -22,11 +22,14 @@ export const createLog = async (entry: LogEntry): Promise<number> => {
   `;
 
   try {
+    // Treat 'anonymous' as null — action_by is a UUID column and rejects non-UUID strings
+    const actionBy = entry.actionBy && entry.actionBy !== 'anonymous' ? entry.actionBy : null;
+
     const result = await pool.query(query, [
       entry.tableId,
       entry.recordId,
       entry.actionType,
-      entry.actionBy,
+      actionBy,
       entry.changedData ? JSON.stringify(entry.changedData) : null,
     ]);
 

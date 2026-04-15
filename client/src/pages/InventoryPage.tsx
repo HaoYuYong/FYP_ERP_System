@@ -27,7 +27,7 @@ interface InventoryItem {
   classification_title?: string; // Classification title joined from classification table (display only)
   uom?: string;                 // Unit of measure (e.g., pcs, kg)
   ref_price?: number;           // Reference selling price joined from inventory table
-  quantity?: number;            // Current quantity joined from quantity table
+  quantity?: number;            // Live stock count stored directly on inventory table
   serial_number?: string;       // Optional serial number (used in edit panel)
   balance_qty?: number;         // Opening balance quantity (used in edit panel)
   description?: string;         // Optional description (used in edit panel)
@@ -589,7 +589,7 @@ const InventoryPage: React.FC = () => {
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {item.ref_price !== undefined && item.ref_price !== null ? item.ref_price : '—'}
                               </td>
-                              {/* quantity is null when no quantity record exists in the quantity table */}
+                              {/* quantity is 0 by default; updated by stock movements */}
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {item.quantity !== undefined && item.quantity !== null ? item.quantity : '—'}
                               </td>

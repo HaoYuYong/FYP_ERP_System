@@ -48,8 +48,6 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [mainData, setMainData] = useState<any>({});
 
   // Inventory-specific states
-  const [quantityData, setQuantityData] = useState<any>({});
-  const [loadingQuantity, setLoadingQuantity] = useState(false);
   const [classifications, setClassifications] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
   const [selectedClassTitle, setSelectedClassTitle] = useState('');
@@ -79,8 +77,6 @@ const EditPanel: React.FC<EditPanelProps> = ({
       setMainData({ ...data });
 
       if (entityType === 'inventory') {
-        // Fetch quantity record for this item
-        fetchQuantity(data.item_id);
         // Fetch all classifications for dropdown
         fetchClassifications();
         // Set selected classification from inventory data
@@ -97,25 +93,6 @@ const EditPanel: React.FC<EditPanelProps> = ({
       // entityType === 'classification': mainData is all that's needed, no extra fetches
     }
   }, [isOpen, data, entityType]);
-
-  // Fetch quantity for the item (inventory only)
-  const fetchQuantity = async (itemId: number) => {
-    try {
-      setLoadingQuantity(true);
-      const { data: qtyData, error } = await supabase
-        .from('quantity')
-        .select('*')
-        .eq('item_id', itemId)
-        .maybeSingle(); // there might be zero or one
-
-      if (error) throw error;
-      setQuantityData(qtyData || {});
-    } catch (err: any) {
-      console.error('Error fetching quantity:', err);
-    } finally {
-      setLoadingQuantity(false);
-    }
-  };
 
   // Fetch all classifications for dropdown (inventory only, read-only from API)
   const fetchClassifications = async () => {
@@ -713,83 +690,65 @@ const EditPanel: React.FC<EditPanelProps> = ({
             {/* INVENTORY QUANTITY TAB */}
             {isInventory && activeTab === 'quantity' && (
               <div className="space-y-4">
-                {loadingQuantity ? (
-                  <div className="text-center py-4">Loading quantity data...</div>
-                ) : (
-                  <>
-                    {/* UOM – unit of measure for this item (e.g., pcs, kg, box) */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
-                      <input
-                        type="text"
-                        value={mainData.uom || ''}
-                        onChange={(e) => setMainData({ ...mainData, uom: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                        placeholder="e.g., pcs, kg, box"
-                      />
-                    </div>
-                    {/* Ref Cost – reference cost used for pricing, stored as decimal */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ref Cost</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={mainData.ref_cost || ''}
-                        onChange={(e) => setMainData({ ...mainData, ref_cost: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                      />
-                    </div>
-                    {/* Ref Price – reference price used for pricing, stored as decimal */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ref Price</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={mainData.ref_price || ''}
-                        onChange={(e) => setMainData({ ...mainData, ref_price: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                      />
-                    </div>
-                    {/* Balance Quantity – opening stock balance stored on the inventory table */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Balance Quantity</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={mainData.balance_qty || ''}
-                        onChange={(e) => setMainData({ ...mainData, balance_qty: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                      />
-                    </div>
-                    {/* Quantity – live tracked stock count from the quantity table */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={quantityData.quantity || ''}
-                        onChange={(e) => setQuantityData({ ...quantityData, quantity: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                      />
-                    </div>
-                    {/* Invoice ID – reference to the invoice linked to this quantity record */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Invoice ID</label>
-                      <input
-                        type="text"
-                        value={quantityData.invoice_id || ''}
-                        onChange={(e) => setQuantityData({ ...quantityData, invoice_id: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
-                      />
-                    </div>
-                  </>
-                )}
+                {/* UOM – unit of measure for this item (e.g., pcs, kg, box) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                  <input
+                    type="text"
+                    value={mainData.uom || ''}
+                    onChange={(e) => setMainData({ ...mainData, uom: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    disabled={loading}
+                    placeholder="e.g., pcs, kg, box"
+                  />
+                </div>
+                {/* Ref Cost – reference cost used for pricing, stored as decimal */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ref Cost</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={mainData.ref_cost || ''}
+                    onChange={(e) => setMainData({ ...mainData, ref_cost: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    disabled={loading}
+                  />
+                </div>
+                {/* Ref Price – reference price used for pricing, stored as decimal */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ref Price</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={mainData.ref_price || ''}
+                    onChange={(e) => setMainData({ ...mainData, ref_price: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    disabled={loading}
+                  />
+                </div>
+                {/* Balance Quantity – minimum stock threshold / reorder point for stockout alerts */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Balance Quantity</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={mainData.balance_qty || ''}
+                    onChange={(e) => setMainData({ ...mainData, balance_qty: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    disabled={loading}
+                  />
+                </div>
+                {/* Quantity – live stock count; read-only because it is updated only via stock movements */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={mainData.quantity ?? ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                  />
+                </div>
               </div>
             )}
 
