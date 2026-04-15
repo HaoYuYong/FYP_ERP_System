@@ -10,6 +10,9 @@ import UserManaging from './pages/UserManaging';
 import InventoryPage from './pages/InventoryPage';
 import SupplierPage from './pages/SupplierPage';
 import CustomerPage from './pages/CustomerPage';
+import PurchasePage from './pages/PurchasePage';
+import PurchaseRequestPage from './pages/PurchaseRequestPage';
+import PurchaseOrderPage from './pages/PurchaseOrderPage';
 
 // ==============================================
 // ICON COMPONENT IMPORTS
@@ -51,52 +54,59 @@ function App() {
   // Each item has: name, URL path, and icon component
   const navigationItems: NavigationItem[] = [
     // Dashboard - Will redirect based on role (handled by protected routes)
-    { 
-      name: 'Dashboard', 
+    {
+      name: 'Dashboard',
       href: '/dashboard',    // Updated from '/adminhome' to generic dashboard
       icon: HomeIcon
     },
-    
+
     // User Management - View all registered users
-    { 
-      name: 'User Management', 
-      href: '/users', 
-      icon: UsersIcon 
+    {
+      name: 'User Management',
+      href: '/users',
+      icon: UsersIcon
     },
-    
+
     // Inventory - Product and stock management
-    { 
-      name: 'Inventory', 
-      href: '/inventory', 
-      icon: PackageIcon 
+    {
+      name: 'Inventory',
+      href: '/inventory',
+      icon: PackageIcon
     },
 
     // Suppliers - Manage supplier information
-    { 
-      name: 'Suppliers', 
-      href: '/suppliers', 
-      icon: PackageIcon 
+    {
+      name: 'Suppliers',
+      href: '/suppliers',
+      icon: PackageIcon
     },
 
     // Customers - Manage customer information
-    { 
-      name: 'Customers', 
-      href: '/customers', 
-      icon: UsersIcon 
+    {
+      name: 'Customers',
+      href: '/customers',
+      icon: UsersIcon
     },
-    
+
+    // Purchase - Manage purchase requests and orders
+    {
+      name: 'Purchase',
+      href: '/purchase',
+      icon: PackageIcon
+    },
+
     // Analytics - Reports and charts (placeholder - not yet implemented)
-    { 
-      name: 'Analytics', 
-      href: '/analytics', 
-      icon: ChartBarIcon 
+    {
+      name: 'Analytics',
+      href: '/analytics',
+      icon: ChartBarIcon
     },
-    
+
     // Settings - System configuration (placeholder - not yet implemented)
-    { 
-      name: 'Settings', 
-      href: '/settings', 
-      icon: CogIcon 
+    {
+      name: 'Settings',
+      href: '/settings',
+      icon: CogIcon
     },
   ];
 
@@ -137,22 +147,26 @@ function App() {
                 <Route path="/admin" element={<AdminHome />} />
                 <Route path="/manager" element={<ManagerHome />} />
                 <Route path="/staff" element={<StaffHome />} />
-                
+
                 {/* Other protected pages */}
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/users" element={<UserManaging />} />
                 <Route path="/inventory" element={<InventoryPage />} />
                 <Route path="/suppliers" element={<SupplierPage />} />
                 <Route path="/customers" element={<CustomerPage />} />
-                
+
+                {/* Purchase Management Pages */}
+                <Route path="/purchase" element={<PurchasePage />} />
+                <Route path="/purchase/purchase_request" element={<PurchaseRequestPage />} />
+                <Route path="/purchase/purchase_order" element={<PurchaseOrderPage />} />
+
                 {/* Placeholder pages for future features */}
-                <Route path="/inventory" element={<Placeholder title="Inventory Management" />} />
                 <Route path="/analytics" element={<Placeholder title="Analytics & Reports" />} />
                 <Route path="/settings" element={<Placeholder title="System Settings" />} />
-                
+
                 {/* Dashboard redirect - temporary: sends to admin page (will be replaced by role-based redirect later) */}
                 <Route path="/dashboard" element={<AdminHome />} />
-                
+
                 {/* CATCH-ALL ROUTE for any undefined paths under protected section */}
                 <Route path="*" element={<Placeholder title="Page Coming Soon" />} />
               </Routes>

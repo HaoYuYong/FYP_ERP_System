@@ -7,6 +7,7 @@ import React from 'react';
 interface PageHeaderProps {
   title: string;                    // Page title shown on the left side of the header
   onRefresh?: () => void;           // If provided, a Refresh List button is rendered at the far right
+  onBack?: () => void;              // If provided, a back arrow button is rendered to the left of title
   children?: React.ReactNode;       // Slot for additional action buttons placed to the left of Refresh
 }
 
@@ -26,13 +27,30 @@ interface PageHeaderProps {
  * flex-shrink-0 prevents the header from shrinking inside a flex-column parent,
  * so the content area below can take the remaining height and own its scroll.
  */
-const PageHeader: React.FC<PageHeaderProps> = ({ title, onRefresh, children }) => {
+const PageHeader: React.FC<PageHeaderProps> = ({ title, onRefresh, onBack, children }) => {
   return (
     // Dark grey header bar – flex-shrink-0 keeps it fixed height in a flex-column layout
     <div className="flex-shrink-0 bg-gray-800 px-6 py-4 flex items-center justify-between">
 
-      {/* Page title on the left, white text for contrast on dark background */}
-      <h1 className="text-2xl font-bold text-white">{title}</h1>
+      {/* Left side: back button (if provided) and page title */}
+      <div className="flex items-center space-x-3">
+        {/* Back button – only rendered when onBack prop is supplied */}
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="p-2 text-gray-300 hover:text-white transition-colors rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            title="Go back"
+          >
+            {/* Left arrow icon */}
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+
+        {/* Page title on the left, white text for contrast on dark background */}
+        <h1 className="text-2xl font-bold text-white">{title}</h1>
+      </div>
 
       {/* Right-side action buttons container */}
       <div className="flex items-center space-x-3">
