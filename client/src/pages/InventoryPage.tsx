@@ -26,6 +26,7 @@ interface InventoryItem {
   classification_code?: string;  // Classification code joined from classification table (display only)
   classification_title?: string; // Classification title joined from classification table (display only)
   uom?: string;                 // Unit of measure (e.g., pcs, kg)
+  ref_price?: number;           // Reference selling price joined from inventory table
   quantity?: number;            // Current quantity joined from quantity table
   serial_number?: string;       // Optional serial number (used in edit panel)
   balance_qty?: number;         // Opening balance quantity (used in edit panel)
@@ -544,6 +545,9 @@ const InventoryPage: React.FC = () => {
                             UOM
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Ref Price
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Quantity
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -555,7 +559,7 @@ const InventoryPage: React.FC = () => {
                         {items.length === 0 ? (
                           // Empty state when no inventory items exist
                           <tr>
-                            <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                            <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
                               <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5 0a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
                               </svg>
@@ -581,6 +585,9 @@ const InventoryPage: React.FC = () => {
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {item.uom || '—'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {item.ref_price !== undefined && item.ref_price !== null ? item.ref_price : '—'}
                               </td>
                               {/* quantity is null when no quantity record exists in the quantity table */}
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
