@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'; // useRef for dropdown click-outside detection
 // import FloatingActionMenu from '../components/ui/FloatingActionMenu'; // FAB commented out – kept for future use
+import AddNewFormModal from '../components/ui/AddNewFormModal'; // Reusable modal with sticky header
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
 import EditPanel from '../components/ui/EditPanel';
 import PageHeader from '../components/ui/PageHeader'; // Reusable dark header bar shared across pages
@@ -726,197 +727,199 @@ const InventoryPage: React.FC = () => {
         {/* ============================================== */}
         {/* MODAL: ADD NEW ITEM                            */}
         {/* ============================================== */}
-        {showItemModal && (
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-              <h2 className="text-xl font-semibold mb-4">Add New Item</h2>
-
-              {/* Modal error display */}
-              {error && (
-                <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
-                  {error}
-                </div>
-              )}
-
-              <form onSubmit={(e) => { e.preventDefault(); handleAddItem(); }}>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Item Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={itemFormData.item_name}
-                      onChange={(e) => setItemFormData({ ...itemFormData, item_name: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      required
-                      disabled={submittingItem}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Serial Number
-                    </label>
-                    <input
-                      type="text"
-                      value={itemFormData.serial_number}
-                      onChange={(e) => setItemFormData({ ...itemFormData, serial_number: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submittingItem}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Balance Quantity
-                    </label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={itemFormData.balance_qty}
-                      onChange={(e) => setItemFormData({ ...itemFormData, balance_qty: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submittingItem}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Unit of Measure (UOM)
-                    </label>
-                    <input
-                      type="text"
-                      value={itemFormData.uom}
-                      onChange={(e) => setItemFormData({ ...itemFormData, uom: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submittingItem}
-                      placeholder="e.g., pcs, kg, box"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-6 flex justify-end space-x-3">
-                  <button
-                    type="button"
-                    onClick={cancelItem}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                    disabled={submittingItem}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submittingItem}
-                    className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center"
-                  >
-                    {submittingItem ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Adding...
-                      </>
-                    ) : (
-                      'Add Item'
-                    )}
-                  </button>
-                </div>
-              </form>
+        {/* ============================================== */}
+        {/* MODAL: ADD NEW ITEM                            */}
+        {/* ============================================== */}
+        <AddNewFormModal
+          isOpen={showItemModal}
+          title="Create New Item"
+          onClose={cancelItem}
+          maxWidth="max-w-md"
+        >
+          {/* Modal error display */}
+          {error && (
+            <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+              {error}
             </div>
-          </div>
-        )}
+          )}
+
+          <form onSubmit={(e) => { e.preventDefault(); handleAddItem(); }} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Item Name <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="text"
+                value={itemFormData.item_name}
+                onChange={(e) => setItemFormData({ ...itemFormData, item_name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                required
+                disabled={submittingItem}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Serial Number
+              </label>
+              <input
+                type="text"
+                value={itemFormData.serial_number}
+                onChange={(e) => setItemFormData({ ...itemFormData, serial_number: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submittingItem}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Balance Quantity
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={itemFormData.balance_qty}
+                onChange={(e) => setItemFormData({ ...itemFormData, balance_qty: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submittingItem}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Unit of Measure (UOM)
+              </label>
+              <input
+                type="text"
+                value={itemFormData.uom}
+                onChange={(e) => setItemFormData({ ...itemFormData, uom: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submittingItem}
+                placeholder="e.g., pcs, kg, box"
+              />
+            </div>
+
+            {/* Form action buttons */}
+            <div className="mt-6 flex justify-end space-x-3 border-t pt-4">
+              <button
+                type="button"
+                onClick={cancelItem}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+                disabled={submittingItem}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submittingItem}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 transition-colors flex items-center"
+              >
+                {submittingItem ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Adding...
+                  </>
+                ) : (
+                  'Add Item'
+                )}
+              </button>
+            </div>
+          </form>
+        </AddNewFormModal>
 
         {/* ============================================== */}
         {/* MODAL: ADD NEW CLASSIFICATION                  */}
         {/* ============================================== */}
-        {showClassModal && (
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-              <h2 className="text-xl font-semibold mb-4">Add New Classification</h2>
-
-              {error && (
-                <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
-                  {error}
-                </div>
-              )}
-
-              <form onSubmit={(e) => { e.preventDefault(); handleAddClassification(); }}>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Classification Code *
-                    </label>
-                    <input
-                      type="text"
-                      value={classFormData.classification_code}
-                      onChange={(e) => setClassFormData({ ...classFormData, classification_code: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      required
-                      disabled={submittingClass}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Classification Title *
-                    </label>
-                    <input
-                      type="text"
-                      value={classFormData.classification_title}
-                      onChange={(e) => setClassFormData({ ...classFormData, classification_title: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      required
-                      disabled={submittingClass}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Description
-                    </label>
-                    <textarea
-                      value={classFormData.classification_description}
-                      onChange={(e) => setClassFormData({ ...classFormData, classification_description: e.target.value })}
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submittingClass}
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-6 flex justify-end space-x-3">
-                  <button
-                    type="button"
-                    onClick={cancelClass}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                    disabled={submittingClass}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submittingClass}
-                    className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center"
-                  >
-                    {submittingClass ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Adding...
-                      </>
-                    ) : (
-                      'Add Classification'
-                    )}
-                  </button>
-                </div>
-              </form>
+        {/* ============================================== */}
+        {/* MODAL: ADD NEW CLASSIFICATION                  */}
+        {/* ============================================== */}
+        <AddNewFormModal
+          isOpen={showClassModal}
+          title="Create New Classification"
+          onClose={cancelClass}
+          maxWidth="max-w-md"
+        >
+          {error && (
+            <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+              {error}
             </div>
-          </div>
-        )}
+          )}
+
+          <form onSubmit={(e) => { e.preventDefault(); handleAddClassification(); }} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Classification Code <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="text"
+                value={classFormData.classification_code}
+                onChange={(e) => setClassFormData({ ...classFormData, classification_code: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                required
+                disabled={submittingClass}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Classification Title <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="text"
+                value={classFormData.classification_title}
+                onChange={(e) => setClassFormData({ ...classFormData, classification_title: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                required
+                disabled={submittingClass}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Description
+              </label>
+              <textarea
+                value={classFormData.classification_description}
+                onChange={(e) => setClassFormData({ ...classFormData, classification_description: e.target.value })}
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submittingClass}
+              />
+            </div>
+
+            {/* Form action buttons */}
+            <div className="mt-6 flex justify-end space-x-3 border-t pt-4">
+              <button
+                type="button"
+                onClick={cancelClass}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+                disabled={submittingClass}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submittingClass}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 transition-colors flex items-center"
+              >
+                {submittingClass ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Adding...
+                  </>
+                ) : (
+                  'Add Classification'
+                )}
+              </button>
+            </div>
+          </form>
+        </AddNewFormModal>
 
         {/* ============================================== */}
         {/* EDIT PANEL: INVENTORY ITEM                     */}

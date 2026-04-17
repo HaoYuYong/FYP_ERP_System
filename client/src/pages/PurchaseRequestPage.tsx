@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'; // useRef for dropdown click-outside detection
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/ui/PageHeader'; // Reusable dark header bar shared across pages
+import AddNewFormModal from '../components/ui/AddNewFormModal'; // Reusable modal with sticky header
 import ConfirmationDialog from '../components/ui/ConfirmationDialog'; // Modal for success/cancel confirmation
 import {
   apiGetPurchaseRequests,
@@ -635,287 +636,259 @@ const PurchaseRequestPage: React.FC = () => {
 
       {/* ============================================== */}
       {/* CREATE PURCHASE REQUEST MODAL                 */}
-      {/* Modal for creating a new purchase request     */}
+      {/* Reusable modal component with sticky header    */}
       {/* ============================================== */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="bg-gray-900 px-6 py-4 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-white">
-                Create New Purchase Request Form
-              </h2>
-              <button
-                onClick={handleCancel}
-                className="text-gray-400 hover:text-white"
-                title="Close"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
+      <AddNewFormModal
+        isOpen={showModal}
+        title="Create New Purchase Request Form"
+        onClose={handleCancel}
+        maxWidth="max-w-2xl"
+      >
+        {/* ============================================== */}
+        {/* SECTION 1: PR HEADER INFORMATION             */}
+        {/* ============================================== */}
+        <div className="border-b pb-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Purchase Request Details
+          </h3>
+
+          <div className="space-y-4">
+            {/* Reference Number (required) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Reference Number <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="text"
+                name="reference_no"
+                value={formData.reference_no}
+                onChange={handleFormChange}
+                placeholder="Enter reference number"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
             </div>
 
-            {/* Modal Content */}
-            <div className="p-6 space-y-6">
-              {/* ============================================== */}
-              {/* SECTION 1: PR HEADER INFORMATION             */}
-              {/* ============================================== */}
-              <div className="border-b pb-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  Purchase Request Details
-                </h3>
-
-                <div className="space-y-4">
-                  {/* Reference Number (required) */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Reference Number <span className="text-red-600">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="reference_no"
-                      value={formData.reference_no}
-                      onChange={handleFormChange}
-                      placeholder="Enter reference number"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    />
-                  </div>
-
-                  {/* Supplier Selection (optional) */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Supplier
-                    </label>
-                    <select
-                      name="supplier_id"
-                      value={formData.supplier_id}
-                      onChange={handleFormChange}
-                      disabled={loadingDropdowns}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="">
-                        {loadingDropdowns
-                          ? 'Loading suppliers...'
-                          : 'Select a supplier'}
-                      </option>
-                      {suppliers.map((supplier) => (
-                        <option
-                          key={supplier.supplier_id}
-                          value={supplier.supplier_id}
-                        >
-                          {supplier.company_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Remarks (optional) */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Remarks
-                    </label>
-                    <textarea
-                      name="remarks"
-                      value={formData.remarks}
-                      onChange={handleFormChange}
-                      placeholder="Enter any additional remarks or notes"
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* ============================================== */}
-              {/* SECTION 2: ADD ITEMS TO PURCHASE REQUEST      */}
-              {/* ============================================== */}
-              <div className="border-b pb-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                  Add Items
-                </h3>
-
-                <div className="space-y-4 bg-gray-50 p-4 rounded-md">
-                  {/* Item Selection Dropdown */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Item Name
-                    </label>
-                    <select
-                      value={currentItem.item_id}
-                      onChange={handleItemSelect}
-                      disabled={loadingDropdowns}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="">
-                        {loadingDropdowns
-                          ? 'Loading items...'
-                          : 'Select an item'}
-                      </option>
-                      {inventoryItems.map((item) => (
-                        <option key={item.item_id} value={item.item_id}>
-                          {item.item_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Item Description (readonly - auto-filled from selected item) */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Item Description
-                    </label>
-                    <textarea
-                      name="item_description"
-                      value={currentItem.item_description}
-                      placeholder="Auto-filled from selected item"
-                      rows={2}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-gray-100"
-                      readOnly
-                    />
-                  </div>
-
-                  {/* UOM (Unit of Measure) - readonly when auto-filled */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Unit of Measure (UOM)
-                    </label>
-                    <input
-                      type="text"
-                      name="uom"
-                      value={currentItem.uom}
-                      onChange={handleItemChange}
-                      placeholder="Auto-filled from selected item"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-gray-100"
-                      readOnly
-                    />
-                  </div>
-
-                  {/* Quantity (required, numeric only) */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Quantity <span className="text-red-600">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="pri_quantity"
-                      value={currentItem.pri_quantity}
-                      onChange={handleItemChange}
-                      placeholder="Enter quantity (numbers only)"
-                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                        itemError
-                          ? 'border-red-500'
-                          : 'border-gray-300'
-                      }`}
-                    />
-                    {/* Error message for quantity validation */}
-                    {itemError && (
-                      <p className="text-red-600 text-sm mt-1">{itemError}</p>
-                    )}
-                  </div>
-
-                  {/* Add Item Button */}
-                  <button
-                    onClick={handleAddItem}
-                    className="w-full mt-4 px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition-colors font-medium"
+            {/* Supplier Selection (optional) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Supplier
+              </label>
+              <select
+                name="supplier_id"
+                value={formData.supplier_id}
+                onChange={handleFormChange}
+                disabled={loadingDropdowns}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">
+                  {loadingDropdowns
+                    ? 'Loading suppliers...'
+                    : 'Select a supplier'}
+                </option>
+                {suppliers.map((supplier) => (
+                  <option
+                    key={supplier.supplier_id}
+                    value={supplier.supplier_id}
                   >
-                    Add Item to Request
-                  </button>
-                </div>
-              </div>
+                    {supplier.company_name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-              {/* ============================================== */}
-              {/* SECTION 3: ITEMS ADDED TO REQUEST             */}
-              {/* ============================================== */}
-              {lineItems.length > 0 && (
-                <div className="border-b pb-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                    Items in Request ({lineItems.length})
-                  </h3>
-
-                  <div className="space-y-3">
-                    {lineItems.map((item, index) => (
-                      <div
-                        key={index}
-                        className="bg-gray-50 p-4 rounded-md flex justify-between items-start"
-                      >
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">
-                            {item.item_name}
-                          </p>
-                          <p className="text-sm text-gray-600 mt-1">
-                            {item.item_description}
-                          </p>
-                          <div className="flex gap-4 mt-2 text-sm text-gray-600">
-                            {item.uom && (
-                              <span>
-                                UOM: <strong>{item.uom}</strong>
-                              </span>
-                            )}
-                            <span>
-                              Qty: <strong>{item.pri_quantity}</strong>
-                            </span>
-                          </div>
-                        </div>
-                        {/* Remove Item Button */}
-                        <button
-                          onClick={() => handleRemoveItem(index)}
-                          className="ml-4 text-red-600 hover:text-red-800 transition-colors"
-                          title="Remove item"
-                        >
-                          <svg
-                            className="w-5 h-5"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                            />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ============================================== */}
-              {/* SECTION 4: FORM ACTIONS                       */}
-              {/* Cancel and Create buttons                     */}
-              {/* ============================================== */}
-              <div className="flex justify-end space-x-3 pt-4 border-t">
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors font-medium"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreatePR}
-                  disabled={submitting || lineItems.length === 0}
-                  className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-                >
-                  {submitting ? 'Creating...' : 'Create'}
-                </button>
-              </div>
+            {/* Remarks (optional) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Remarks
+              </label>
+              <textarea
+                name="remarks"
+                value={formData.remarks}
+                onChange={handleFormChange}
+                placeholder="Enter any additional remarks or notes"
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
             </div>
           </div>
         </div>
-      )}
+
+        {/* ============================================== */}
+        {/* SECTION 2: ADD ITEMS TO PURCHASE REQUEST      */}
+        {/* ============================================== */}
+        <div className="border-b pb-6 mt-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Add Items
+          </h3>
+
+          <div className="space-y-4 bg-gray-50 p-4 rounded-md">
+            {/* Item Selection Dropdown */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Item Name
+              </label>
+              <select
+                value={currentItem.item_id}
+                onChange={handleItemSelect}
+                disabled={loadingDropdowns}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">
+                  {loadingDropdowns
+                    ? 'Loading items...'
+                    : 'Select an item'}
+                </option>
+                {inventoryItems.map((item) => (
+                  <option key={item.item_id} value={item.item_id}>
+                    {item.item_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Item Description (readonly - auto-filled from selected item) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Item Description
+              </label>
+              <textarea
+                name="item_description"
+                value={currentItem.item_description}
+                placeholder="Auto-filled from selected item"
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-gray-100"
+                readOnly
+              />
+            </div>
+
+            {/* UOM (Unit of Measure) - readonly when auto-filled */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Unit of Measure (UOM)
+              </label>
+              <input
+                type="text"
+                name="uom"
+                value={currentItem.uom}
+                onChange={handleItemChange}
+                placeholder="Auto-filled from selected item"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-gray-100"
+                readOnly
+              />
+            </div>
+
+            {/* Quantity (required, numeric only) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Quantity <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="text"
+                name="pri_quantity"
+                value={currentItem.pri_quantity}
+                onChange={handleItemChange}
+                placeholder="Enter quantity (numbers only)"
+                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                  itemError
+                    ? 'border-red-500'
+                    : 'border-gray-300'
+                }`}
+              />
+              {/* Error message for quantity validation */}
+              {itemError && (
+                <p className="text-red-600 text-sm mt-1">{itemError}</p>
+              )}
+            </div>
+
+            {/* Add Item Button */}
+            <button
+              onClick={handleAddItem}
+              className="w-full mt-4 px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition-colors font-medium"
+            >
+              Add Item to Request
+            </button>
+          </div>
+        </div>
+
+        {/* ============================================== */}
+        {/* SECTION 3: ITEMS ADDED TO REQUEST             */}
+        {/* ============================================== */}
+        {lineItems.length > 0 && (
+          <div className="border-b pb-6 mt-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Items in Request ({lineItems.length})
+            </h3>
+
+            <div className="space-y-3">
+              {lineItems.map((item, index) => (
+                <div
+                  key={index}
+                  className="bg-gray-50 p-4 rounded-md flex justify-between items-start"
+                >
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">
+                      {item.item_name}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">
+                      {item.item_description}
+                    </p>
+                    <div className="flex gap-4 mt-2 text-sm text-gray-600">
+                      {item.uom && (
+                        <span>
+                          UOM: <strong>{item.uom}</strong>
+                        </span>
+                      )}
+                      <span>
+                        Qty: <strong>{item.pri_quantity}</strong>
+                      </span>
+                    </div>
+                  </div>
+                  {/* Remove Item Button */}
+                  <button
+                    onClick={() => handleRemoveItem(index)}
+                    className="ml-4 text-red-600 hover:text-red-800 transition-colors"
+                    title="Remove item"
+                  >
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ============================================== */}
+        {/* SECTION 4: FORM ACTIONS                       */}
+        {/* Cancel and Create buttons                     */}
+        {/* ============================================== */}
+        <div className="flex justify-end space-x-3 pt-4 border-t mt-6">
+          <button
+            onClick={handleCancel}
+            className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleCreatePR}
+            disabled={submitting || lineItems.length === 0}
+            className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            {submitting ? 'Creating...' : 'Create'}
+          </button>
+        </div>
+      </AddNewFormModal>
 
       {/* ============================================== */}
       {/* SUCCESS CONFIRMATION DIALOG                   */}

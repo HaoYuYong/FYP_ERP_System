@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'; // useRef added for Add New dropdown click-outside detection
 import { apiGetSuppliers, apiCreateSupplier } from '../lib/supplierApi';
 // import FloatingActionMenu from '../components/ui/FloatingActionMenu'; // FAB commented out – kept for future use
+import AddNewFormModal from '../components/ui/AddNewFormModal'; // Reusable modal with sticky header
 import ConfirmationDialog from '../components/ui/ConfirmationDialog';
 import EditPanel from '../components/ui/EditPanel';
 import PageHeader from '../components/ui/PageHeader'; // Reusable dark header bar shared across pages
@@ -337,105 +338,106 @@ const SupplierPage: React.FC = () => {
         {/* ============================================== */}
         {/* MODAL: ADD NEW SUPPLIER                        */}
         {/* ============================================== */}
-        {showModal && (
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-              <h2 className="text-xl font-semibold mb-4">Add New Supplier</h2>
-
-              {/* Modal error display */}
-              {error && (
-                <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
-                  {error}
-                </div>
-              )}
-
-              <form onSubmit={(e) => { e.preventDefault(); handleAddSupplier(); }}>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Company Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.company_name}
-                      onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      required
-                      disabled={submitting}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Industry Name
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.industry_name}
-                      onChange={(e) => setFormData({ ...formData, industry_name: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submitting}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Industry Code
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.industry_code}
-                      onChange={(e) => setFormData({ ...formData, industry_code: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submitting}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Register No (New)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.register_no_new}
-                      onChange={(e) => setFormData({ ...formData, register_no_new: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      disabled={submitting}
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-6 flex justify-end space-x-3">
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                    disabled={submitting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center"
-                  >
-                    {submitting ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Adding...
-                      </>
-                    ) : (
-                      'Add Supplier'
-                    )}
-                  </button>
-                </div>
-              </form>
+        {/* ============================================== */}
+        {/* MODAL: ADD NEW SUPPLIER                        */}
+        {/* ============================================== */}
+        <AddNewFormModal
+          isOpen={showModal}
+          title="Create New Supplier"
+          onClose={handleCancel}
+          maxWidth="max-w-md"
+        >
+          {/* Modal error display */}
+          {error && (
+            <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+              {error}
             </div>
-          </div>
-        )}
+          )}
+
+          <form onSubmit={(e) => { e.preventDefault(); handleAddSupplier(); }} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Company Name <span className="text-red-600">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.company_name}
+                onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                required
+                disabled={submitting}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Industry Name
+              </label>
+              <input
+                type="text"
+                value={formData.industry_name}
+                onChange={(e) => setFormData({ ...formData, industry_name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submitting}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Industry Code
+              </label>
+              <input
+                type="text"
+                value={formData.industry_code}
+                onChange={(e) => setFormData({ ...formData, industry_code: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submitting}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Register No (New)
+              </label>
+              <input
+                type="text"
+                value={formData.register_no_new}
+                onChange={(e) => setFormData({ ...formData, register_no_new: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                disabled={submitting}
+              />
+            </div>
+
+            {/* Form action buttons */}
+            <div className="mt-6 flex justify-end space-x-3 border-t pt-4">
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 transition-colors flex items-center"
+              >
+                {submitting ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Adding...
+                  </>
+                ) : (
+                  'Add Supplier'
+                )}
+              </button>
+            </div>
+          </form>
+        </AddNewFormModal>
 
         {/* ============================================== */}
         {/* EDIT PANEL                                     */}
