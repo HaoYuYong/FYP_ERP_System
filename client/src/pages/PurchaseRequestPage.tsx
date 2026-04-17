@@ -813,12 +813,12 @@ const PurchaseRequestPage: React.FC = () => {
         {/* ============================================== */}
         {/* SECTION 3: ITEMS ADDED TO REQUEST             */}
         {/* ============================================== */}
-        {lineItems.length > 0 && (
-          <div className="border-b pb-6 mt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Items in Request ({lineItems.length})
-            </h3>
+        <div className="border-b pb-6 mt-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Items in Request ({lineItems.length})
+          </h3>
 
+          {lineItems.length > 0 ? (
             <div className="space-y-3">
               {lineItems.map((item, index) => (
                 <div
@@ -866,8 +866,10 @@ const PurchaseRequestPage: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-gray-500 text-sm">No items added yet. Add items above to get started.</p>
+          )}
+        </div>
 
         {/* ============================================== */}
         {/* SECTION 4: FORM ACTIONS                       */}
