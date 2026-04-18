@@ -8,7 +8,7 @@ import { EditIcon } from '../components/ui/Icons'; // Pencil icon for the Action
 import {
   apiGetPurchaseRequests,
   apiCreatePurchaseRequest,
-  apiGetSuppliers,
+  apiGetSuppliersWithDetails,
   apiGetInventoryItems,
 } from '../lib/purchaseRequestApi';
 
@@ -51,11 +51,19 @@ interface PurchaseRequestItem {
 
 /**
  * Supplier Interface
- * Represents supplier for dropdown selection
+ * Represents supplier with contact details for dropdown and display
  */
 interface Supplier {
   supplier_id: number;
   company_name: string;
+  register_no_new?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  post_code?: string;
 }
 
 /**
@@ -98,6 +106,8 @@ const PurchaseRequestPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]); // List of suppliers for selection
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]); // List of inventory items for selection
   const [loadingDropdowns, setLoadingDropdowns] = useState(false); // Loading state for dropdown data
+  // Selected supplier details displayed as read-only fields in the create form
+  const [selectedSupplierInfo, setSelectedSupplierInfo] = useState<Supplier | null>(null);
 
   // Form data for new PR
   const [formData, setFormData] = useState({
@@ -158,8 +168,8 @@ const PurchaseRequestPage: React.FC = () => {
     try {
       setLoadingDropdowns(true);
 
-      // Fetch suppliers for dropdown selection
-      const suppliersResult = await apiGetSuppliers();
+      // Fetch suppliers with contact details for dropdown and detail display
+      const suppliersResult = await apiGetSuppliersWithDetails();
       if (suppliersResult.success) {
         setSuppliers(suppliersResult.data || []);
       }
@@ -209,6 +219,20 @@ const PurchaseRequestPage: React.FC = () => {
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  /**
+   * Handle supplier dropdown selection – updates supplier_id and auto-fills read-only detail fields
+   */
+  const handleSupplierSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const supplierId = e.target.value;
+    setFormData(prev => ({ ...prev, supplier_id: supplierId }));
+    if (supplierId) {
+      const sup = suppliers.find(s => s.supplier_id === parseInt(supplierId));
+      setSelectedSupplierInfo(sup || null);
+    } else {
+      setSelectedSupplierInfo(null);
+    }
   };
 
   /**
@@ -377,6 +401,7 @@ const PurchaseRequestPage: React.FC = () => {
     setShowConfirm(false);
     // Reset form for creating another PR
     setFormData({ reference_no: '', supplier_id: '', remarks: '' });
+    setSelectedSupplierInfo(null);
     setLineItems([]);
     setCurrentItem({
       item_id: '',
@@ -403,6 +428,7 @@ const PurchaseRequestPage: React.FC = () => {
   const handleCancel = () => {
     setShowModal(false);
     setFormData({ reference_no: '', supplier_id: '', remarks: '' });
+    setSelectedSupplierInfo(null);
     setLineItems([]);
     setCurrentItem({
       item_id: '',
@@ -716,25 +742,91 @@ const PurchaseRequestPage: React.FC = () => {
               <select
                 name="supplier_id"
                 value={formData.supplier_id}
-                onChange={handleFormChange}
+                onChange={handleSupplierSelect}
                 disabled={loadingDropdowns}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">
-                  {loadingDropdowns
-                    ? 'Loading suppliers...'
-                    : 'Select a supplier'}
+                  {loadingDropdowns ? 'Loading suppliers...' : 'Select a supplier'}
                 </option>
                 {suppliers.map((supplier) => (
-                  <option
-                    key={supplier.supplier_id}
-                    value={supplier.supplier_id}
-                  >
-                    {supplier.company_name}
+                  <option key={supplier.supplier_id} value={supplier.supplier_id}>
+                    {/* Format: company_name(register_no_new) or just company_name if no reg no */}
+                    {supplier.register_no_new
+                      ? `${supplier.company_name}(${supplier.register_no_new})`
+                      : supplier.company_name}
                   </option>
                 ))}
               </select>
             </div>
+
+            {/* Supplier detail fields – auto-filled read-only when a supplier is selected */}
+            {selectedSupplierInfo && (
+              <div className="space-y-3 bg-gray-50 p-4 rounded-md border border-gray-200">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Supplier Details</p>
+
+                {/* Supplier ID */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Supplier ID</label>
+                  <input
+                    type="text"
+                    value={selectedSupplierInfo.supplier_id}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                  />
+                </div>
+
+                {/* Register No */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                  <input
+                    type="text"
+                    value={selectedSupplierInfo.register_no_new || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                  />
+                </div>
+
+                {/* Email */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="text"
+                    value={selectedSupplierInfo.email || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                  />
+                </div>
+
+                {/* Phone */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                  <input
+                    type="text"
+                    value={selectedSupplierInfo.phone || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                  />
+                </div>
+
+                {/* Address – combines address, city, state, country, post_code */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                  <textarea
+                    value={[
+                      selectedSupplierInfo.address,
+                      selectedSupplierInfo.city,
+                      selectedSupplierInfo.state,
+                      selectedSupplierInfo.country,
+                      selectedSupplierInfo.post_code,
+                    ].filter(Boolean).join(', ')}
+                    readOnly
+                    rows={2}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Remarks (optional) */}
             <div>

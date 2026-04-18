@@ -204,15 +204,15 @@ router.put('/update', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Invalid status value' });
     }
 
-    // Validate each item's quantity if items are provided
+    // Validate each item — item_name required, quantity must be positive
     if (items && Array.isArray(items)) {
       for (const item of items) {
+        if (!item.item_name || !item.item_name.trim()) {
+          return res.status(400).json({ success: false, message: 'Item name is required for all items' });
+        }
         const qty = parseFloat(item.pri_quantity);
         if (isNaN(qty) || qty <= 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'All item quantities must be positive numbers',
-          });
+          return res.status(400).json({ success: false, message: 'All item quantities must be positive numbers' });
         }
       }
     }

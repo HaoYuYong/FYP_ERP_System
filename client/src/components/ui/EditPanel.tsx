@@ -114,11 +114,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
       } else if (entityType === 'purchase_request') {
         // Copy PR line items into local editable state
         setPrItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
-        // Initialize supplier selection from PR data
+        // Pre-fill supplier display from PR snapshot columns (not live supplier data)
         setPrSupplierId(data.supplier_id || null);
-        setPrSupplierInfo({});
-        // Fetch all suppliers and inventory items for dropdowns
-        fetchPRDropdownData(data.supplier_id);
+        setPrSupplierInfo({
+          company_name:    data.supplier_company_name || '',
+          register_no_new: data.supplier_register_no  || '',
+          email:           data.supplier_email        || '',
+          phone:           data.supplier_phone        || '',
+          address:         data.supplier_address      || '',
+        });
+        // Fetch supplier list and inventory items for dropdowns
+        fetchPRDropdownData();
       }
     }
   }, [isOpen, data, entityType]);
@@ -198,8 +204,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
     }
   };
 
-  // Fetch all suppliers (with contact details) and inventory items for PR editing dropdowns
-  const fetchPRDropdownData = async (currentSupplierId?: number) => {
+  // Fetch all suppliers (with contact details) and inventory items for PR editing dropdowns.
+  // Supplier info display is pre-filled from PR snapshot columns — NOT from this data.
+  const fetchPRDropdownData = async () => {
     setLoadingPRDropdowns(true);
     try {
       const [suppliersResult, itemsResult] = await Promise.all([
@@ -207,19 +214,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
         apiGetInventoryItems(),
       ]);
 
-      if (suppliersResult.success) {
-        const suppliers = suppliersResult.data || [];
-        setAllSuppliers(suppliers);
-        // Pre-fill supplier info display from current selection
-        if (currentSupplierId) {
-          const found = suppliers.find((s: any) => s.supplier_id === currentSupplierId);
-          if (found) setPrSupplierInfo(found);
-        }
-      }
-
-      if (itemsResult.success) {
-        setAllInventoryItems(itemsResult.data || []);
-      }
+      if (suppliersResult.success) setAllSuppliers(suppliersResult.data || []);
+      if (itemsResult.success)    setAllInventoryItems(itemsResult.data || []);
     } catch (err: any) {
       console.error('Error fetching PR dropdown data:', err);
     } finally {
@@ -264,6 +260,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
     );
   };
 
+  // Add Item button – appends a blank item card to the Items tab
+  const handleAddPRItem = () => {
+    setPrItems(prev => [{
+      _tempId: Date.now(), // stable React key for new items
+      item_id: null,
+      item_name: '',
+      item_description: '',
+      uom: '',
+      pri_quantity: 1,
+    }, ...prev]);
+  };
+
+  // Remove button per item – removes item card at given index (deleted from DB on Update)
+  const handleRemovePRItem = (index: number) => {
+    setPrItems(prev => prev.filter((_, i) => i !== index));
+  };
+
   // Refresh button per item – re-pulls description and uom from allInventoryItems using current item_id
   const handleRefreshItem = (index: number) => {
     const item = prItems[index];
@@ -277,6 +290,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
           : it
       )
     );
+  };
+
+  // Refresh button for supplier – re-pulls contact details from allSuppliers using current prSupplierId
+  const handleRefreshSupplier = () => {
+    if (!prSupplierId) return;
+    const sup = allSuppliers.find((s: any) => s.supplier_id === prSupplierId);
+    if (sup) setPrSupplierInfo(sup);
   };
 
   // When classification selection changes, update title/desc (inventory only)
@@ -427,6 +447,11 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
         if (!result.success) throw new Error(result.message || 'Failed to update classification');
       } else if (entityType === 'purchase_request') {
+        // Validate all items have a name selected before sending
+        if (prItems.some(item => !item.item_name || !item.item_name.trim())) {
+          throw new Error('All items must have an item name selected.');
+        }
+
         // Build items payload, parsing quantity to float for each line item
         const itemsPayload = prItems.map(item => ({
           pri_id: item.pri_id,
@@ -514,6 +539,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const isCustomerSupplier = entityType === 'customer' || entityType === 'supplier';
   const isClassification = entityType === 'classification';
   const isPurchaseRequest = entityType === 'purchase_request';
+  // All fields (except Status) editable only in Draft
+  const isPRFieldsEditable = isPurchaseRequest && data?.status === 'draft';
+  // Status dropdown editable in Draft/Sent/Received; locked in Closed
+  const isStatusEditable = isPurchaseRequest && data?.status !== 'closed';
 
   return (
     <>
@@ -686,6 +715,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
             </div>
           )}
 
+          {/* PR status notice – Sent/Received: only Status editable; Closed: fully locked */}
+          {isPurchaseRequest && !isPRFieldsEditable && isStatusEditable && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+              This purchase request is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+            </div>
+          )}
+          {isPurchaseRequest && !isStatusEditable && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+              This purchase request is <strong>Closed</strong> and cannot be edited.
+            </div>
+          )}
+
           {/* Form content - single column layout */}
           <div className="space-y-4">
           {/* MAIN TAB (common for all entity types) */}
@@ -807,18 +848,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                       />
                     </div>
-                    {/* Reference Number – user-defined identifier, freely editable */}
+                    {/* Reference Number – editable in Draft only */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
                       <input
                         type="text"
                         value={mainData.reference_no || ''}
                         onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPRFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPRFieldsEditable}
                       />
                     </div>
-                    {/* Terms – payment/delivery terms e.g. "Net 30 days" */}
+                    {/* Terms – editable in Draft only */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
                       <input
@@ -826,29 +867,29 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         value={mainData.terms || ''}
                         onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
                         placeholder="e.g., Net 30 days"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPRFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPRFieldsEditable}
                       />
                     </div>
-                    {/* Remarks – free-text note printed on the PR document */}
+                    {/* Remarks – editable in Draft only */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
                       <textarea
                         value={mainData.remarks || ''}
                         onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
                         rows={3}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPRFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPRFieldsEditable}
                       />
                     </div>
-                    {/* Status dropdown – all 4 lifecycle statuses are selectable */}
+                    {/* Status – editable in Draft/Sent/Received; locked when Closed */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
                         value={mainData.status || 'draft'}
                         onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isStatusEditable}
                       >
                         <option value="draft">Draft</option>
                         <option value="sent">Sent</option>
@@ -1235,44 +1276,80 @@ const EditPanel: React.FC<EditPanelProps> = ({
             {/* PURCHASE REQUEST ITEMS TAB */}
             {isPurchaseRequest && activeTab === 'items' && (
               <div className="space-y-4">
+                {/* Tab header: item count title + Add Item button */}
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Items in Request ({prItems.length})
+                  </span>
+                  {isPRFieldsEditable && (
+                    <button
+                      type="button"
+                      onClick={handleAddPRItem}
+                      disabled={loading}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Item
+                    </button>
+                  )}
+                </div>
+
                 {loadingPRDropdowns ? (
                   <div className="text-center py-4 text-gray-500">Loading items...</div>
                 ) : prItems.length === 0 ? (
                   <p className="text-sm text-gray-500 py-4 text-center">No items in this purchase request.</p>
                 ) : (
                   prItems.map((item, index) => (
-                    // Card for each line item with editable item_name and pri_quantity
-                    <div key={item.pri_id} className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
-                      {/* Card header: line number + Refresh button */}
+                    // Card for each line item
+                    <div key={item.pri_id ?? item._tempId ?? index} className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                      {/* Card header: line number + action buttons */}
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                           Line Item {index + 1}
                         </span>
-                        {/* Refresh button re-fetches description and uom from current inventory data */}
-                        <button
-                          type="button"
-                          onClick={() => handleRefreshItem(index)}
-                          disabled={loading || !item.item_id}
-                          className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
-                          title="Refresh description and UOM from inventory"
-                        >
-                          {/* Refresh (circular arrows) icon */}
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                          Refresh
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {/* Refresh button re-fetches description and uom from current inventory data */}
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshItem(index)}
+                            disabled={loading || !item.item_id || !isPRFieldsEditable}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            title={!isPRFieldsEditable ? 'Read-only — only draft purchase requests can be edited' : 'Refresh description and UOM from inventory'}
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Refresh
+                          </button>
+                          {/* Remove button deletes this item card (removed from DB on Update) */}
+                          {isPRFieldsEditable && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePRItem(index)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                              title="Remove this item"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Remove
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Item Name – select from inventory; displays as item_name(item_description) */}
+                      {/* Item Name – select from inventory; editable in Draft only */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
                         <select
                           value={item.item_id || ''}
                           onChange={(e) => handlePRItemNameChange(index, e.target.value)}
-                          disabled={loading}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                          disabled={loading || !isPRFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPRFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         >
                           {/* Show current item_name when no item_id or item not in catalogue */}
                           {!item.item_id && (
@@ -1320,7 +1397,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         />
                       </div>
 
-                      {/* Quantity – editable, must be a positive number */}
+                      {/* Quantity – editable in Draft only */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                         <input
@@ -1329,8 +1406,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
                           min="0.01"
                           value={item.pri_quantity}
                           onChange={(e) => handlePRItemQuantityChange(index, e.target.value)}
-                          disabled={loading}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                          disabled={loading || !isPRFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPRFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         />
                       </div>
                     </div>
@@ -1346,14 +1423,35 @@ const EditPanel: React.FC<EditPanelProps> = ({
                   <div className="text-center py-4 text-gray-500">Loading suppliers...</div>
                 ) : (
                   <>
-                    {/* Company – select from supplier list; displays as company_name(register_no_new) */}
+                    {/* Supplier tab header: label + Refresh button */}
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">
+                        Supplier Details
+                      </span>
+                      {/* Refresh button re-reads contact details from allSuppliers for current selection */}
+                      <button
+                        type="button"
+                        onClick={handleRefreshSupplier}
+                        disabled={loading || !prSupplierId || !isPRFieldsEditable}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                        title={!isPRFieldsEditable ? 'Read-only — only draft purchase requests can be edited' : 'Refresh supplier details from supplier list'}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+
+                    {/* Company – editable in Draft only */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
                       <select
                         value={prSupplierId || ''}
                         onChange={(e) => handlePRSupplierChange(e.target.value ? Number(e.target.value) : null)}
-                        disabled={loading}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        disabled={loading || !isPRFieldsEditable}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPRFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                       >
                         <option value="">— No supplier selected —</option>
                         {allSuppliers.map((sup: any) => (
@@ -1411,11 +1509,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
                       />
                     </div>
 
-                    {/* Address – read-only, auto-filled from supplier's contact_info */}
+                    {/* Address – read-only, combines address/city/state/country/post_code from contact_info */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
                       <textarea
-                        value={prSupplierInfo.address || ''}
+                        value={[
+                          prSupplierInfo.address,
+                          prSupplierInfo.city,
+                          prSupplierInfo.state,
+                          prSupplierInfo.country,
+                          prSupplierInfo.post_code,
+                        ].filter(Boolean).join(', ')}
                         readOnly
                         rows={3}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
@@ -1504,7 +1608,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <button
             onClick={handleUpdate}
             className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center transition-colors"
-            disabled={loading}
+            disabled={loading || (isPurchaseRequest && !isStatusEditable)}
+            title={isPurchaseRequest && !isStatusEditable ? 'This purchase request is closed and cannot be edited' : undefined}
           >
             {loading ? (
               <>

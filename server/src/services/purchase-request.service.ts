@@ -30,11 +30,42 @@ export const createPurchaseRequest = async (
     const prNoResult = await client.query("SELECT 'PR-' || LPAD(nextval('seq_pr_no')::text, 6, '0') AS pr_no");
     const prNo = prNoResult.rows[0].pr_no;
 
-    // Insert purchase_request header record.
+    // Snapshot supplier details at creation time if supplier_id provided.
+    let snapshotCompanyName = null;
+    let snapshotRegisterNo  = null;
+    let snapshotAddress     = null;
+    let snapshotPhone       = null;
+    let snapshotEmail       = null;
+
+    if (data.supplier_id) {
+      const supResult = await client.query(`
+        SELECT s.company_name, s.register_no_new,
+               ci.address, ci.city, ci.state, ci.country, ci.post_code,
+               ci.phone, ci.email
+        FROM supplier s
+        LEFT JOIN contact_info ci ON s.contact_id = ci.contact_id
+        WHERE s.supplier_id = $1
+      `, [data.supplier_id]);
+      const sup = supResult.rows[0];
+      if (sup) {
+        const addressParts = [sup.address, sup.city, sup.state, sup.country, sup.post_code].filter(Boolean);
+        snapshotCompanyName = sup.company_name || null;
+        snapshotRegisterNo  = sup.register_no_new || null;
+        snapshotAddress     = addressParts.join(', ') || null;
+        snapshotPhone       = sup.phone || null;
+        snapshotEmail       = sup.email || null;
+      }
+    }
+
+    // Insert purchase_request header record with supplier snapshot columns.
     const prQuery = `
-      INSERT INTO purchase_request (pr_no, reference_no, supplier_id, remarks, status)
-      VALUES ($1, $2, $3, $4, 'draft')
-      RETURNING pr_id, pr_no, reference_no, supplier_id, remarks, status
+      INSERT INTO purchase_request (
+        pr_no, reference_no, supplier_id, remarks, status,
+        supplier_company_name, supplier_register_no, supplier_address, supplier_phone, supplier_email
+      )
+      VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9)
+      RETURNING pr_id, pr_no, reference_no, supplier_id, remarks, status,
+                supplier_company_name, supplier_register_no, supplier_address, supplier_phone, supplier_email
     `;
 
     const prResult = await client.query(prQuery, [
@@ -42,6 +73,11 @@ export const createPurchaseRequest = async (
       data.reference_no || null,
       data.supplier_id || null,
       data.remarks || null,
+      snapshotCompanyName,
+      snapshotRegisterNo,
+      snapshotAddress,
+      snapshotPhone,
+      snapshotEmail,
     ]);
 
     const pr = prResult.rows[0];
@@ -170,7 +206,7 @@ export const getPurchaseRequests = async () => {
       GROUP BY pr.pr_id, pr.pr_no, pr.reference_no, pr.terms, pr.supplier_id, pr.remarks, pr.status,
                pr.supplier_company_name, s.company_name, pr.supplier_register_no,
                pr.supplier_address, pr.supplier_phone, pr.supplier_email
-      ORDER BY pr.pr_id DESC
+      ORDER BY pr.pr_no DESC
     `;
 
     const result = await pool.query(query);
@@ -203,7 +239,7 @@ export const getSuppliersWithDetails = async () => {
   try {
     const query = `
       SELECT s.supplier_id, s.company_name, s.register_no_new,
-             ci.email, ci.phone, ci.address
+             ci.email, ci.phone, ci.address, ci.city, ci.state, ci.country, ci.post_code
       FROM supplier s
       LEFT JOIN contact_info ci ON s.contact_id = ci.contact_id
       ORDER BY s.company_name
@@ -243,7 +279,7 @@ export const updatePurchaseRequest = async (
     status?: string;
     supplier_id?: number | null;
     items?: Array<{
-      pri_id: number;
+      pri_id?: number;        // omitted for new items; present for existing items
       item_id?: number | null;
       item_name: string;
       item_description: string;
@@ -272,23 +308,26 @@ export const updatePurchaseRequest = async (
     if (data.remarks !== undefined) headerFields.remarks = data.remarks;
     if (data.status !== undefined) headerFields.status = data.status;
 
-    // If supplier changed, re-snapshot supplier details from live supplier + contact_info
-    if (data.supplier_id !== undefined && data.supplier_id !== oldPR.supplier_id) {
+    // Always re-snapshot supplier details when supplier_id is provided.
+    // This ensures Refresh + Update writes the latest contact info even when the same supplier is kept.
+    if (data.supplier_id !== undefined) {
       headerFields.supplier_id = data.supplier_id;
       if (data.supplier_id) {
         const supResult = await client.query(`
           SELECT s.company_name, s.register_no_new,
-                 ci.address, ci.phone, ci.email
+                 ci.address, ci.city, ci.state, ci.country, ci.post_code,
+                 ci.phone, ci.email
           FROM supplier s
           LEFT JOIN contact_info ci ON s.contact_id = ci.contact_id
           WHERE s.supplier_id = $1
         `, [data.supplier_id]);
         const sup = supResult.rows[0];
         if (sup) {
+          const addressParts = [sup.address, sup.city, sup.state, sup.country, sup.post_code].filter(Boolean);
           // Update snapshot columns to reflect new supplier
           headerFields.supplier_company_name = sup.company_name;
           headerFields.supplier_register_no   = sup.register_no_new;
-          headerFields.supplier_address       = sup.address;
+          headerFields.supplier_address       = addressParts.join(', ') || null;
           headerFields.supplier_phone         = sup.phone;
           headerFields.supplier_email         = sup.email;
         }
@@ -325,52 +364,98 @@ export const updatePurchaseRequest = async (
       changedData: { before: oldPR, after: updatedPR },
     });
 
-    // Update each line item if provided
-    if (data.items && data.items.length > 0) {
+    // Full-sync line items: INSERT new, UPDATE existing, DELETE removed
+    if (data.items !== undefined) {
       const itemTableId = await getTableId('purchase_request_item');
-      for (const item of data.items) {
-        // Capture old values before updating, for change detection and audit log
-        const oldItemResult = await client.query(
-          'SELECT pri_id, item_id, item_name, item_description, uom, pri_quantity FROM purchase_request_item WHERE pri_id = $1',
-          [item.pri_id]
-        );
-        const oldItem = oldItemResult.rows[0];
 
-        // Normalise the new values to compare cleanly against the stored record
-        const newItemId        = item.item_id || null;
-        const newItemName      = item.item_name;
-        const newItemDesc      = item.item_description || item.item_name;
-        const newUom           = item.uom || null;
-        const newQty           = item.pri_quantity;
+      // Fetch all current items for this PR
+      const existingResult = await client.query(
+        'SELECT pri_id, item_id, item_name, item_description, uom, pri_quantity FROM purchase_request_item WHERE pr_id = $1',
+        [data.pr_id]
+      );
+      const existingItems: any[] = existingResult.rows;
 
-        // Detect whether any field actually changed (parse DB decimal string to number for qty)
-        const itemChanged =
-          String(oldItem.item_id)          !== String(newItemId)   ||
-          oldItem.item_name                !== newItemName          ||
-          oldItem.item_description         !== newItemDesc          ||
-          oldItem.uom                      !== newUom               ||
-          parseFloat(oldItem.pri_quantity) !== newQty;
+      // Build set of pri_ids that are still in the payload
+      const keptPriIds = new Set(
+        data.items.filter(i => i.pri_id).map(i => i.pri_id)
+      );
 
-        // Always apply the DB update (idempotent even if unchanged)
-        const updatedItemResult = await client.query(`
-          UPDATE purchase_request_item
-          SET item_id = $2, item_name = $3, item_description = $4, uom = $5, pri_quantity = $6
-          WHERE pri_id = $1
-          RETURNING pri_id, item_id, item_name, item_description, uom, pri_quantity
-        `, [item.pri_id, newItemId, newItemName, newItemDesc, newUom, newQty]);
-
-        // Only create a log entry when the item actually changed — avoids false audit noise
-        if (itemChanged) {
+      // DELETE items removed by the user (in DB but not in payload)
+      for (const existing of existingItems) {
+        if (!keptPriIds.has(existing.pri_id)) {
+          await client.query('DELETE FROM purchase_request_item WHERE pri_id = $1', [existing.pri_id]);
           await createLog({
             tableId: itemTableId,
-            recordId: String(item.pri_id),
-            actionType: 'UPDATE',
+            recordId: String(existing.pri_id),
+            actionType: 'DELETE',
+            actionBy: userId,
+            changedData: { before: existing, after: null },
+          });
+        }
+      }
+
+      for (const item of data.items) {
+        const newItemId   = item.item_id || null;
+        const newItemName = item.item_name;
+        const newItemDesc = item.item_description || item.item_name;
+        const newUom      = item.uom || null;
+        const newQty      = item.pri_quantity;
+
+        if (item.pri_id) {
+          // UPDATE existing item
+          const oldItem = existingItems.find(i => i.pri_id === item.pri_id);
+          if (!oldItem) continue; // safety guard
+
+          const itemChanged =
+            String(oldItem.item_id)          !== String(newItemId)   ||
+            oldItem.item_name                !== newItemName          ||
+            oldItem.item_description         !== newItemDesc          ||
+            oldItem.uom                      !== newUom               ||
+            parseFloat(oldItem.pri_quantity) !== newQty;
+
+          const updatedItemResult = await client.query(`
+            UPDATE purchase_request_item
+            SET item_id = $2, item_name = $3, item_description = $4, uom = $5, pri_quantity = $6
+            WHERE pri_id = $1
+            RETURNING pri_id, item_id, item_name, item_description, uom, pri_quantity
+          `, [item.pri_id, newItemId, newItemName, newItemDesc, newUom, newQty]);
+
+          if (itemChanged) {
+            await createLog({
+              tableId: itemTableId,
+              recordId: String(item.pri_id),
+              actionType: 'UPDATE',
+              actionBy: userId,
+              changedData: { before: oldItem, after: updatedItemResult.rows[0] },
+            });
+          }
+        } else {
+          // INSERT new item added via "Add Item"
+          const insertResult = await client.query(`
+            INSERT INTO purchase_request_item (pr_id, item_id, item_name, item_description, uom, pri_quantity)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING pri_id, item_id, item_name, item_description, uom, pri_quantity
+          `, [data.pr_id, newItemId, newItemName, newItemDesc, newUom, newQty]);
+
+          const newItem = insertResult.rows[0];
+          const priLogId = await createLog({
+            tableId: itemTableId,
+            recordId: String(newItem.pri_id),
+            actionType: 'INSERT',
             actionBy: userId,
             changedData: {
-              before: oldItem,
-              after: updatedItemResult.rows[0],
+              pr_id: data.pr_id,
+              item_id: newItemId,
+              item_name: newItemName,
+              item_description: newItemDesc,
+              uom: newUom,
+              pri_quantity: newQty,
             },
           });
+          await client.query(
+            'UPDATE purchase_request_item SET log_id = $1 WHERE pri_id = $2',
+            [priLogId, newItem.pri_id]
+          );
         }
       }
     }
