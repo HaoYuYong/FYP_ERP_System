@@ -14,6 +14,11 @@ import {
   apiGetSuppliersWithDetails,
   apiGetInventoryItems,
 } from '../../lib/purchaseRequestApi';
+import { apiUpdatePurchaseOrder } from '../../lib/purchaseOrderApi';
+import {
+  apiGetSuppliersWithDetails as apiGetPOSuppliersWithDetails,
+  apiGetInventoryItems as apiGetPOInventoryItems,
+} from '../../lib/purchaseOrderApi';
 import ConfirmationDialog from './ConfirmationDialog';
 
 // ==============================================
@@ -24,7 +29,7 @@ import ConfirmationDialog from './ConfirmationDialog';
 interface EditPanelProps {
   isOpen: boolean;                    // Whether panel is visible
   onClose: () => void;                // Close panel (without saving)
-  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request'; // Type of entity being edited
+  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order'; // Type of entity being edited
   data: any;                          // Current entity data (from table row)
   onUpdate: () => void;               // Callback after successful update
   onDelete?: () => void;              // Callback after successful delete (optional for PR)
@@ -91,6 +96,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [loadingPRDropdowns, setLoadingPRDropdowns] = useState(false);
 
   // ==============================================
+  // PURCHASE ORDER EDITING STATE
+  // ==============================================
+
+  const [poItems, setPoItems] = useState<any[]>([]);
+  const [poSupplierId, setPoSupplierId] = useState<number | null>(null);
+  const [poSupplierInfo, setPoSupplierInfo] = useState<any>({});
+  const [allPOSuppliers, setAllPOSuppliers] = useState<any[]>([]);
+  const [allPOInventoryItems, setAllPOInventoryItems] = useState<any[]>([]);
+  const [loadingPODropdowns, setLoadingPODropdowns] = useState(false);
+
+  // ==============================================
   // EFFECTS – Load data when panel opens
   // ==============================================
   useEffect(() => {
@@ -125,6 +141,19 @@ const EditPanel: React.FC<EditPanelProps> = ({
         });
         // Fetch supplier list and inventory items for dropdowns
         fetchPRDropdownData();
+      } else if (entityType === 'purchase_order') {
+        // Copy PO line items into local editable state
+        setPoItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
+        // Pre-fill supplier display from PO snapshot columns
+        setPoSupplierId(data.supplier_id || null);
+        setPoSupplierInfo({
+          company_name:    data.supplier_company_name || '',
+          register_no_new: data.supplier_register_no  || '',
+          email:           data.supplier_email        || '',
+          phone:           data.supplier_phone        || '',
+          address:         data.supplier_address      || '',
+        });
+        fetchPODropdownData();
       }
     }
   }, [isOpen, data, entityType]);
@@ -201,6 +230,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
       console.error('Error fetching related data:', err);
     } finally {
       setLoadingRelated(false);
+    }
+  };
+
+  // Fetch all suppliers and inventory items for PO editing dropdowns.
+  const fetchPODropdownData = async () => {
+    setLoadingPODropdowns(true);
+    try {
+      const [suppliersResult, itemsResult] = await Promise.all([
+        apiGetPOSuppliersWithDetails(),
+        apiGetPOInventoryItems(),
+      ]);
+      if (suppliersResult.success) setAllPOSuppliers(suppliersResult.data || []);
+      if (itemsResult.success)    setAllPOInventoryItems(itemsResult.data || []);
+    } catch (err: any) {
+      console.error('Error fetching PO dropdown data:', err);
+    } finally {
+      setLoadingPODropdowns(false);
     }
   };
 
@@ -297,6 +343,93 @@ const EditPanel: React.FC<EditPanelProps> = ({
     if (!prSupplierId) return;
     const sup = allSuppliers.find((s: any) => s.supplier_id === prSupplierId);
     if (sup) setPrSupplierInfo(sup);
+  };
+
+  // ==============================================
+  // PURCHASE ORDER ITEM/SUPPLIER HANDLERS
+  // ==============================================
+
+  const handlePOSupplierChange = (supplierId: number | null) => {
+    setPoSupplierId(supplierId);
+    if (supplierId) {
+      const sup = allPOSuppliers.find((s: any) => s.supplier_id === supplierId);
+      if (sup) setPoSupplierInfo(sup);
+    } else {
+      setPoSupplierInfo({});
+    }
+  };
+
+  const handleRefreshPOSupplier = () => {
+    if (!poSupplierId) return;
+    const sup = allPOSuppliers.find((s: any) => s.supplier_id === poSupplierId);
+    if (sup) setPoSupplierInfo(sup);
+  };
+
+  const handlePOItemNameChange = (index: number, newItemId: number | string) => {
+    const invItem = allPOInventoryItems.find((i: any) => i.item_id === Number(newItemId));
+    if (!invItem) return;
+    setPoItems(prev =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              item_id: invItem.item_id,
+              item_name: invItem.item_name,
+              item_description: invItem.description || '',
+              uom: invItem.uom || '',
+            }
+          : item
+      )
+    );
+  };
+
+  const handlePOItemFieldChange = (index: number, field: string, value: string) => {
+    setPoItems(prev =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const updated = { ...item, [field]: value };
+        // Recalculate line_total whenever qty, unit_price, or discount changes
+        if (field === 'poi_quantity' || field === 'unit_price' || field === 'discount') {
+          const qty   = parseFloat(field === 'poi_quantity' ? value : item.poi_quantity) || 0;
+          const price = parseFloat(field === 'unit_price'   ? value : item.unit_price)   || 0;
+          const disc  = parseFloat(field === 'discount'     ? value : item.discount)     || 0;
+          updated.line_total = Math.max(0, qty * price - disc);
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleAddPOItem = () => {
+    setPoItems(prev => [{
+      _tempId: Date.now(),
+      item_id: null,
+      item_name: '',
+      item_description: '',
+      uom: '',
+      poi_quantity: 1,
+      unit_price: 0,
+      discount: 0,
+      line_total: 0,
+    }, ...prev]);
+  };
+
+  const handleRemovePOItem = (index: number) => {
+    setPoItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleRefreshPOItem = (index: number) => {
+    const item = poItems[index];
+    if (!item?.item_id) return;
+    const invItem = allPOInventoryItems.find((i: any) => i.item_id === item.item_id);
+    if (!invItem) return;
+    setPoItems(prev =>
+      prev.map((it, i) =>
+        i === index
+          ? { ...it, item_description: invItem.description || '', uom: invItem.uom || '' }
+          : it
+      )
+    );
   };
 
   // When classification selection changes, update title/desc (inventory only)
@@ -474,6 +607,35 @@ const EditPanel: React.FC<EditPanelProps> = ({
         });
 
         if (!result.success) throw new Error(result.message || 'Failed to update purchase request');
+      } else if (entityType === 'purchase_order') {
+        // Validate all items have a name selected before sending
+        if (poItems.some(item => !item.item_name || !item.item_name.trim())) {
+          throw new Error('All items must have an item name selected.');
+        }
+
+        const itemsPayload = poItems.map(item => ({
+          poi_id: item.poi_id,
+          item_id: item.item_id || null,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || null,
+          poi_quantity: parseFloat(item.poi_quantity),
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount) || 0,
+        }));
+
+        const result = await apiUpdatePurchaseOrder({
+          po_id: data.po_id,
+          reference_no: mainData.reference_no,
+          terms: mainData.terms,
+          delivery_date: mainData.delivery_date || null,
+          remarks: mainData.remarks,
+          status: mainData.status,
+          supplier_id: poSupplierId !== undefined ? poSupplierId : undefined,
+          items: itemsPayload,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update purchase order');
       }
 
       // Refresh parent list
@@ -539,10 +701,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const isCustomerSupplier = entityType === 'customer' || entityType === 'supplier';
   const isClassification = entityType === 'classification';
   const isPurchaseRequest = entityType === 'purchase_request';
+  const isPurchaseOrder = entityType === 'purchase_order';
   // All fields (except Status) editable only in Draft
   const isPRFieldsEditable = isPurchaseRequest && data?.status === 'draft';
   // Status dropdown editable in Draft/Sent/Received; locked in Closed
   const isStatusEditable = isPurchaseRequest && data?.status !== 'closed';
+  // PO gate rules (same pattern as PR; PO has 5 statuses: draft/sent/confirmed/received/closed)
+  const isPOFieldsEditable = isPurchaseOrder && data?.status === 'draft';
+  const isPOStatusEditable = isPurchaseOrder && data?.status !== 'closed';
 
   return (
     <>
@@ -565,15 +731,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <h2 className="text-lg font-semibold">
             {isPurchaseRequest
               ? 'Edit Purchase Request Details'
-              : `Edit ${
-                  entityType === 'inventory'
-                    ? 'Item Details'
-                    : entityType === 'customer'
-                      ? 'Customer Details'
-                      : entityType === 'supplier'
-                        ? 'Supplier Details'
-                        : 'Classification Details'
-                }`}
+              : isPurchaseOrder
+                ? 'Edit Purchase Order Details'
+                : `Edit ${
+                    entityType === 'inventory'
+                      ? 'Item Details'
+                      : entityType === 'customer'
+                        ? 'Customer Details'
+                        : entityType === 'supplier'
+                          ? 'Supplier Details'
+                          : 'Classification Details'
+                  }`}
           </h2>
           <button
             onClick={onClose}
@@ -702,6 +870,32 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 </button>
               </>
             )}
+
+            {/* Purchase Order-only tabs */}
+            {isPurchaseOrder && (
+              <>
+                <button
+                  onClick={() => setActiveTab('items')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'items'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Items
+                </button>
+                <button
+                  onClick={() => setActiveTab('supplier')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'supplier'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Supplier
+                </button>
+              </>
+            )}
           </nav>
         </div>
 
@@ -724,6 +918,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
           {isPurchaseRequest && !isStatusEditable && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
               This purchase request is <strong>Closed</strong> and cannot be edited.
+            </div>
+          )}
+
+          {/* PO status notice */}
+          {isPurchaseOrder && !isPOFieldsEditable && isPOStatusEditable && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+              This purchase order is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+            </div>
+          )}
+          {isPurchaseOrder && !isPOStatusEditable && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+              This purchase order is <strong>Closed</strong> and cannot be edited.
             </div>
           )}
 
@@ -893,6 +1099,103 @@ const EditPanel: React.FC<EditPanelProps> = ({
                       >
                         <option value="draft">Draft</option>
                         <option value="sent">Sent</option>
+                        <option value="received">Received</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+                {isPurchaseOrder && (
+                  <>
+                    {/* PO Number – system-generated, cannot be changed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">PO Number</label>
+                      <input
+                        type="text"
+                        value={mainData.po_no || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    {/* Reference Number – editable in Draft only */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
+                      <input
+                        type="text"
+                        value={mainData.reference_no || ''}
+                        onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPOFieldsEditable}
+                      />
+                    </div>
+                    {/* Terms – editable in Draft only */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
+                      <input
+                        type="text"
+                        value={mainData.terms || ''}
+                        onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
+                        placeholder="e.g., Net 30 days"
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPOFieldsEditable}
+                      />
+                    </div>
+                    {/* Delivery Date – editable in Draft only */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Delivery Date</label>
+                      <input
+                        type="date"
+                        value={mainData.delivery_date ? mainData.delivery_date.split('T')[0] : ''}
+                        onChange={(e) => setMainData({ ...mainData, delivery_date: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPOFieldsEditable}
+                      />
+                    </div>
+                    {/* PR ID – read-only back-link to the originating Purchase Request */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">PR Reference</label>
+                      <input
+                        type="text"
+                        value={mainData.pr_id || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    {/* Remarks – editable in Draft only */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                      <textarea
+                        value={mainData.remarks || ''}
+                        onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
+                        rows={3}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPOFieldsEditable}
+                      />
+                    </div>
+                    {/* Total Amount – read-only, recalculated from line items on each update */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount (RM)</label>
+                      <input
+                        type="text"
+                        value={mainData.total_amount !== undefined && mainData.total_amount !== null
+                          ? Number(mainData.total_amount).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '0.00'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    {/* Status – editable in Draft/Sent/Confirmed/Received; locked when Closed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={mainData.status || 'draft'}
+                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPOStatusEditable}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="sent">Sent</option>
+                        <option value="confirmed">Confirmed</option>
                         <option value="received">Received</option>
                         <option value="closed">Closed</option>
                       </select>
@@ -1530,6 +1833,258 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
+            {/* PURCHASE ORDER ITEMS TAB */}
+            {isPurchaseOrder && activeTab === 'items' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Items in Order ({poItems.length})
+                  </span>
+                  {isPOFieldsEditable && (
+                    <button
+                      type="button"
+                      onClick={handleAddPOItem}
+                      disabled={loading}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Item
+                    </button>
+                  )}
+                </div>
+
+                {loadingPODropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading items...</div>
+                ) : poItems.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-4 text-center">No items in this purchase order.</p>
+                ) : (
+                  poItems.map((item, index) => (
+                    <div key={item.poi_id ?? item._tempId ?? index} className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Line Item {index + 1}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshPOItem(index)}
+                            disabled={loading || !item.item_id || !isPOFieldsEditable}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            title={!isPOFieldsEditable ? 'Read-only — only draft purchase orders can be edited' : 'Refresh description and UOM from inventory'}
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Refresh
+                          </button>
+                          {isPOFieldsEditable && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePOItem(index)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                              title="Remove this item"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Item Name dropdown */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                        <select
+                          value={item.item_id || ''}
+                          onChange={(e) => handlePOItemNameChange(index, e.target.value)}
+                          disabled={loading || !isPOFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        >
+                          {!item.item_id && (
+                            <option value="">{item.item_name || '— Select item —'}</option>
+                          )}
+                          {allPOInventoryItems.map((inv: any) => (
+                            <option key={inv.item_id} value={inv.item_id}>
+                              {inv.description ? `${inv.item_name}(${inv.description})` : inv.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Item ID (read-only) */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                        <input type="text" value={item.item_id || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      {/* Item Description (read-only) */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
+                        <input type="text" value={item.item_description || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      {/* UOM (read-only) */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                        <input type="text" value={item.uom || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      {/* Quantity – editable in Draft */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0.01"
+                          value={item.poi_quantity}
+                          onChange={(e) => handlePOItemFieldChange(index, 'poi_quantity', e.target.value)}
+                          disabled={loading || !isPOFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        />
+                      </div>
+
+                      {/* Unit Price – editable in Draft */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price (RM)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={item.unit_price}
+                          onChange={(e) => handlePOItemFieldChange(index, 'unit_price', e.target.value)}
+                          disabled={loading || !isPOFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        />
+                      </div>
+
+                      {/* Discount – editable in Draft */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount (RM)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={item.discount}
+                          onChange={(e) => handlePOItemFieldChange(index, 'discount', e.target.value)}
+                          disabled={loading || !isPOFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        />
+                      </div>
+
+                      {/* Line Total (read-only, auto-calculated) */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Line Total (RM)</label>
+                        <input type="text"
+                          value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      {/* Received Quantity (read-only) */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Received Quantity</label>
+                        <input type="text" value={item.received_quantity ?? 0} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* PURCHASE ORDER SUPPLIER TAB */}
+            {isPurchaseOrder && activeTab === 'supplier' && (
+              <div className="space-y-4">
+                {loadingPODropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading suppliers...</div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Supplier Details</span>
+                      <button
+                        type="button"
+                        onClick={handleRefreshPOSupplier}
+                        disabled={loading || !poSupplierId || !isPOFieldsEditable}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                        title={!isPOFieldsEditable ? 'Read-only — only draft purchase orders can be edited' : 'Refresh supplier details from supplier list'}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+
+                    {/* Company dropdown – editable in Draft only */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                      <select
+                        value={poSupplierId || ''}
+                        onChange={(e) => handlePOSupplierChange(e.target.value ? Number(e.target.value) : null)}
+                        disabled={loading || !isPOFieldsEditable}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— No supplier selected —</option>
+                        {allPOSuppliers.map((sup: any) => (
+                          <option key={sup.supplier_id} value={sup.supplier_id}>
+                            {sup.register_no_new
+                              ? `${sup.company_name}(${sup.register_no_new})`
+                              : sup.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Supplier ID</label>
+                      <input type="text" value={poSupplierId || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                      <input type="text" value={poSupplierInfo.register_no_new || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input type="text" value={poSupplierInfo.email || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input type="text" value={poSupplierInfo.phone || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={[
+                          poSupplierInfo.address,
+                          poSupplierInfo.city,
+                          poSupplierInfo.state,
+                          poSupplierInfo.country,
+                          poSupplierInfo.post_code,
+                        ].filter(Boolean).join(', ')}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* LIABILITIES TAB (customer/supplier) */}
             {isCustomerSupplier && activeTab === 'liabilities' && (
               <div className="space-y-4">
@@ -1596,7 +2151,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
           >
             Cancel
           </button>
-          {!isPurchaseRequest && onDelete && (
+          {!isPurchaseRequest && !isPurchaseOrder && onDelete && (
             <button
               onClick={handleDeleteConfirm}
               className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
@@ -1608,8 +2163,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <button
             onClick={handleUpdate}
             className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center transition-colors"
-            disabled={loading || (isPurchaseRequest && !isStatusEditable)}
-            title={isPurchaseRequest && !isStatusEditable ? 'This purchase request is closed and cannot be edited' : undefined}
+            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable)}
+            title={
+              (isPurchaseRequest && !isStatusEditable)
+                ? 'This purchase request is closed and cannot be edited'
+                : (isPurchaseOrder && !isPOStatusEditable)
+                  ? 'This purchase order is closed and cannot be edited'
+                  : undefined
+            }
           >
             {loading ? (
               <>

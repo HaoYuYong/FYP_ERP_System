@@ -13,6 +13,7 @@ import inventoryRoutes from './routes/inventory';
 import customerRoutes from './routes/customer';
 import supplierRoutes from './routes/supplier';
 import purchaseRequestRoutes from './routes/purchase-request';
+import purchaseOrderRoutes from './routes/purchase-order';
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/customer', customerRoutes);
 app.use('/api/supplier', supplierRoutes);
 app.use('/api/purchase-request', purchaseRequestRoutes);
+app.use('/api/purchase-order', purchaseOrderRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
