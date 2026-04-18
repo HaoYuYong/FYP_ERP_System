@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/ui/PageHeader'; // Reusable dark header bar shared across pages
 import AddNewFormModal from '../components/ui/AddNewFormModal'; // Reusable modal with sticky header
 import ConfirmationDialog from '../components/ui/ConfirmationDialog'; // Modal for success/cancel confirmation
+import EditPanel from '../components/ui/EditPanel'; // Reusable slide-out edit panel
+import { EditIcon } from '../components/ui/Icons'; // Pencil icon for the Action column
 import {
   apiGetPurchaseRequests,
   apiCreatePurchaseRequest,
@@ -22,8 +24,13 @@ interface PurchaseRequest {
   pr_id: string;
   pr_no: string;
   reference_no: string;
+  terms?: string;              // Payment/delivery terms e.g. "Net 30 days"
   supplier_id?: number;
   supplier_company_name?: string;
+  supplier_register_no?: string;
+  supplier_address?: string;
+  supplier_phone?: string;
+  supplier_email?: string;
   remarks?: string;
   status: string;
   items?: PurchaseRequestItem[];
@@ -110,6 +117,10 @@ const PurchaseRequestPage: React.FC = () => {
     uom: '', // Auto-filled from inventory (optional)
     pri_quantity: '', // User-entered quantity (required, numeric only)
   });
+
+  // Edit panel state for viewing/editing an existing PR
+  const [showEditPanel, setShowEditPanel] = useState(false); // Controls edit panel visibility
+  const [selectedPR, setSelectedPR] = useState<PurchaseRequest | null>(null); // PR being edited
 
   // Validation and error states
   const [submitting, setSubmitting] = useState(false); // Loading state during form submission
@@ -405,6 +416,21 @@ const PurchaseRequestPage: React.FC = () => {
   };
 
   /**
+   * Open EditPanel for the selected PR to view/edit its details.
+   */
+  const handleEditClick = (pr: PurchaseRequest) => {
+    setSelectedPR(pr);
+    setShowEditPanel(true);
+  };
+
+  /**
+   * Called by EditPanel after a successful update – refresh the PR list.
+   */
+  const handleEditSuccess = () => {
+    fetchPurchaseRequests();
+  };
+
+  /**
    * Handle back button click to navigate to /purchase page
    */
   const handleBack = () => {
@@ -559,6 +585,10 @@ const PurchaseRequestPage: React.FC = () => {
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Status
                       </th>
+                      {/* Action column – opens EditPanel for the selected PR */}
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
 
@@ -568,7 +598,7 @@ const PurchaseRequestPage: React.FC = () => {
                       // Empty state when no PRs exist
                       <tr>
                         <td
-                          colSpan={5}
+                          colSpan={6}
                           className="px-6 py-12 text-center text-gray-500"
                         >
                           <svg
@@ -622,6 +652,16 @@ const PurchaseRequestPage: React.FC = () => {
                               {pr.status.charAt(0).toUpperCase() +
                                 pr.status.slice(1)}
                             </span>
+                          </td>
+                          {/* Action cell – edit icon opens EditPanel for this PR */}
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <button
+                              onClick={() => handleEditClick(pr)}
+                              className="text-primary-600 hover:text-primary-800 transition-colors"
+                              title="Edit purchase request"
+                            >
+                              <EditIcon className="w-5 h-5" />
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -901,6 +941,19 @@ const PurchaseRequestPage: React.FC = () => {
         message="Purchase Request created successfully. Click **OK** to continue adding more or **Cancel** to return to the main page."
         onConfirm={handleConfirmOk}
         onCancel={handleConfirmCancel}
+      />
+
+      {/* ============================================== */}
+      {/* EDIT PANEL: PURCHASE REQUEST                   */}
+      {/* Opens when user clicks edit icon on a PR row; */}
+      {/* 3 tabs – Main, Items, Supplier                 */}
+      {/* ============================================== */}
+      <EditPanel
+        isOpen={showEditPanel}
+        onClose={() => setShowEditPanel(false)}
+        entityType="purchase_request"
+        data={selectedPR}
+        onUpdate={handleEditSuccess}
       />
     </div>
   );

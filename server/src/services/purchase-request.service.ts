@@ -135,20 +135,25 @@ export const createPurchaseRequest = async (
 };
 
 /**
- * Fetch all purchase requests with their associated line items.
+ * Fetch all purchase requests with their associated line items and supplier snapshot columns.
  */
 export const getPurchaseRequests = async () => {
   try {
-    // Join PR header with its line items and supplier info, group by PR
+    // Join PR header with line items; use COALESCE to prefer snapshot over live supplier name
     const query = `
-      SELECT 
+      SELECT
         pr.pr_id,
         pr.pr_no,
         pr.reference_no,
+        pr.terms,
         pr.supplier_id,
         pr.remarks,
         pr.status,
-        s.company_name AS supplier_company_name,
+        COALESCE(pr.supplier_company_name, s.company_name) AS supplier_company_name,
+        pr.supplier_register_no,
+        pr.supplier_address,
+        pr.supplier_phone,
+        pr.supplier_email,
         json_agg(
           json_build_object(
             'pri_id', pri.pri_id,
@@ -162,7 +167,9 @@ export const getPurchaseRequests = async () => {
       FROM purchase_request pr
       LEFT JOIN supplier s ON pr.supplier_id = s.supplier_id
       LEFT JOIN purchase_request_item pri ON pr.pr_id = pri.pr_id
-      GROUP BY pr.pr_id, pr.pr_no, pr.reference_no, pr.supplier_id, pr.remarks, pr.status, s.company_name
+      GROUP BY pr.pr_id, pr.pr_no, pr.reference_no, pr.terms, pr.supplier_id, pr.remarks, pr.status,
+               pr.supplier_company_name, s.company_name, pr.supplier_register_no,
+               pr.supplier_address, pr.supplier_phone, pr.supplier_email
       ORDER BY pr.pr_id DESC
     `;
 
@@ -175,7 +182,7 @@ export const getPurchaseRequests = async () => {
 };
 
 /**
- * Fetch all suppliers for dropdown selection.
+ * Fetch all suppliers for dropdown selection (lightweight, create form use).
  */
 export const getSuppliers = async () => {
   try {
@@ -184,6 +191,27 @@ export const getSuppliers = async () => {
     return result.rows;
   } catch (error) {
     console.error('Error fetching suppliers:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetch all suppliers with contact details for EditPanel Supplier tab.
+ * Joins supplier with contact_info to get email, phone, address.
+ */
+export const getSuppliersWithDetails = async () => {
+  try {
+    const query = `
+      SELECT s.supplier_id, s.company_name, s.register_no_new,
+             ci.email, ci.phone, ci.address
+      FROM supplier s
+      LEFT JOIN contact_info ci ON s.contact_id = ci.contact_id
+      ORDER BY s.company_name
+    `;
+    const result = await pool.query(query);
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching suppliers with details:', error);
     throw error;
   }
 };
@@ -199,5 +227,161 @@ export const getInventoryItems = async () => {
   } catch (error) {
     console.error('Error fetching inventory items:', error);
     throw error;
+  }
+};
+
+/**
+ * Update a purchase request header and its line items with audit logging.
+ * Updates supplier snapshot columns when supplier_id changes.
+ */
+export const updatePurchaseRequest = async (
+  data: {
+    pr_id: string;
+    reference_no?: string;
+    terms?: string;
+    remarks?: string;
+    status?: string;
+    supplier_id?: number | null;
+    items?: Array<{
+      pri_id: number;
+      item_id?: number | null;
+      item_name: string;
+      item_description: string;
+      uom?: string;
+      pri_quantity: number;
+    }>;
+  },
+  userId: string
+) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Verify PR exists before updating
+    const oldPRResult = await client.query(
+      'SELECT * FROM purchase_request WHERE pr_id = $1',
+      [data.pr_id]
+    );
+    if (oldPRResult.rows.length === 0) throw new Error('Purchase request not found');
+    const oldPR = oldPRResult.rows[0];
+
+    // Build dynamic SET clauses for header fields
+    const headerFields: Record<string, any> = {};
+    if (data.reference_no !== undefined) headerFields.reference_no = data.reference_no;
+    if (data.terms !== undefined) headerFields.terms = data.terms;
+    if (data.remarks !== undefined) headerFields.remarks = data.remarks;
+    if (data.status !== undefined) headerFields.status = data.status;
+
+    // If supplier changed, re-snapshot supplier details from live supplier + contact_info
+    if (data.supplier_id !== undefined && data.supplier_id !== oldPR.supplier_id) {
+      headerFields.supplier_id = data.supplier_id;
+      if (data.supplier_id) {
+        const supResult = await client.query(`
+          SELECT s.company_name, s.register_no_new,
+                 ci.address, ci.phone, ci.email
+          FROM supplier s
+          LEFT JOIN contact_info ci ON s.contact_id = ci.contact_id
+          WHERE s.supplier_id = $1
+        `, [data.supplier_id]);
+        const sup = supResult.rows[0];
+        if (sup) {
+          // Update snapshot columns to reflect new supplier
+          headerFields.supplier_company_name = sup.company_name;
+          headerFields.supplier_register_no   = sup.register_no_new;
+          headerFields.supplier_address       = sup.address;
+          headerFields.supplier_phone         = sup.phone;
+          headerFields.supplier_email         = sup.email;
+        }
+      } else {
+        // Clear all supplier fields when supplier is deselected
+        headerFields.supplier_id             = null;
+        headerFields.supplier_company_name   = null;
+        headerFields.supplier_register_no    = null;
+        headerFields.supplier_address        = null;
+        headerFields.supplier_phone          = null;
+        headerFields.supplier_email          = null;
+      }
+    }
+
+    // Execute header update; use RETURNING * so we can store the real updated record in the log
+    let updatedPR = oldPR; // Fallback to old record if nothing changed
+    if (Object.keys(headerFields).length > 0) {
+      const keys = Object.keys(headerFields);
+      const setClauses = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
+      const updateResult = await client.query(
+        `UPDATE purchase_request SET ${setClauses} WHERE pr_id = $1 RETURNING *`,
+        [data.pr_id, ...Object.values(headerFields)]
+      );
+      updatedPR = updateResult.rows[0];
+    }
+
+    // Log PR header update — stores full record before and after (consistent with inventory logs)
+    const prTableId = await getTableId('purchase_request');
+    await createLog({
+      tableId: prTableId,
+      recordId: data.pr_id,
+      actionType: 'UPDATE',
+      actionBy: userId,
+      changedData: { before: oldPR, after: updatedPR },
+    });
+
+    // Update each line item if provided
+    if (data.items && data.items.length > 0) {
+      const itemTableId = await getTableId('purchase_request_item');
+      for (const item of data.items) {
+        // Capture old values before updating, for change detection and audit log
+        const oldItemResult = await client.query(
+          'SELECT pri_id, item_id, item_name, item_description, uom, pri_quantity FROM purchase_request_item WHERE pri_id = $1',
+          [item.pri_id]
+        );
+        const oldItem = oldItemResult.rows[0];
+
+        // Normalise the new values to compare cleanly against the stored record
+        const newItemId        = item.item_id || null;
+        const newItemName      = item.item_name;
+        const newItemDesc      = item.item_description || item.item_name;
+        const newUom           = item.uom || null;
+        const newQty           = item.pri_quantity;
+
+        // Detect whether any field actually changed (parse DB decimal string to number for qty)
+        const itemChanged =
+          String(oldItem.item_id)          !== String(newItemId)   ||
+          oldItem.item_name                !== newItemName          ||
+          oldItem.item_description         !== newItemDesc          ||
+          oldItem.uom                      !== newUom               ||
+          parseFloat(oldItem.pri_quantity) !== newQty;
+
+        // Always apply the DB update (idempotent even if unchanged)
+        const updatedItemResult = await client.query(`
+          UPDATE purchase_request_item
+          SET item_id = $2, item_name = $3, item_description = $4, uom = $5, pri_quantity = $6
+          WHERE pri_id = $1
+          RETURNING pri_id, item_id, item_name, item_description, uom, pri_quantity
+        `, [item.pri_id, newItemId, newItemName, newItemDesc, newUom, newQty]);
+
+        // Only create a log entry when the item actually changed — avoids false audit noise
+        if (itemChanged) {
+          await createLog({
+            tableId: itemTableId,
+            recordId: String(item.pri_id),
+            actionType: 'UPDATE',
+            actionBy: userId,
+            changedData: {
+              before: oldItem,
+              after: updatedItemResult.rows[0],
+            },
+          });
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    return { pr_id: data.pr_id };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating purchase request:', error);
+    throw error;
+  } finally {
+    client.release();
   }
 };

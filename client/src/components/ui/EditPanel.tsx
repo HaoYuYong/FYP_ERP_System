@@ -9,6 +9,11 @@ import {
 } from '../../lib/inventoryApi';
 import { apiUpdateCustomer, apiDeleteCustomer } from '../../lib/customerApi';
 import { apiUpdateSupplier, apiDeleteSupplier } from '../../lib/supplierApi';
+import {
+  apiUpdatePurchaseRequest,
+  apiGetSuppliersWithDetails,
+  apiGetInventoryItems,
+} from '../../lib/purchaseRequestApi';
 import ConfirmationDialog from './ConfirmationDialog';
 
 // ==============================================
@@ -41,8 +46,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // STATE
   // ==============================================
 
-  // Current active tab (different sets for inventory vs customer/supplier)
-  const [activeTab, setActiveTab] = useState<'main' | 'quantity' | 'classification' | 'bank' | 'contact' | 'tax' | 'liabilities'>('main');
+  // Current active tab (inventory: main/quantity/classification; customer/supplier: main/bank/contact/tax/liabilities; PR: main/items/supplier)
+  const [activeTab, setActiveTab] = useState<'main' | 'quantity' | 'classification' | 'bank' | 'contact' | 'tax' | 'liabilities' | 'items' | 'supplier'>('main');
 
   // Form data for main fields (inventory/customer/supplier)
   const [mainData, setMainData] = useState<any>({});
@@ -69,19 +74,36 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // ==============================================
+  // PURCHASE REQUEST EDITING STATE
+  // ==============================================
+
+  // Editable copy of PR line items for the Items tab
+  const [prItems, setPrItems] = useState<any[]>([]);
+  // Selected supplier ID for PR (drives Supplier tab display)
+  const [prSupplierId, setPrSupplierId] = useState<number | null>(null);
+  // Live supplier info displayed on Supplier tab (auto-filled from dropdown selection)
+  const [prSupplierInfo, setPrSupplierInfo] = useState<any>({});
+  // All suppliers with contact details for the Supplier tab dropdown
+  const [allSuppliers, setAllSuppliers] = useState<any[]>([]);
+  // All inventory items for the Items tab item_name dropdown
+  const [allInventoryItems, setAllInventoryItems] = useState<any[]>([]);
+  // Loading state while fetching PR dropdown data
+  const [loadingPRDropdowns, setLoadingPRDropdowns] = useState(false);
+
+  // ==============================================
   // EFFECTS – Load data when panel opens
   // ==============================================
   useEffect(() => {
     if (isOpen && data) {
-      // Set main data (common for all types)
+      // Always start on Main tab and clear previous errors when panel opens
+      setActiveTab('main');
+      setError('');
       setMainData({ ...data });
 
       if (entityType === 'inventory') {
         // Fetch all classifications for dropdown
         fetchClassifications();
-        // Set selected classification from inventory data
         setSelectedClassId(data.classification_id || null);
-        // Pre-fill classification title/desc if available
         if (data.classification) {
           setSelectedClassTitle(data.classification.classification_title);
           setSelectedClassDesc(data.classification.classification_description);
@@ -89,8 +111,15 @@ const EditPanel: React.FC<EditPanelProps> = ({
       } else if (entityType === 'customer' || entityType === 'supplier') {
         // Fetch related records (bank, contact, tax, liabilities) using foreign keys
         fetchRelatedData();
+      } else if (entityType === 'purchase_request') {
+        // Copy PR line items into local editable state
+        setPrItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
+        // Initialize supplier selection from PR data
+        setPrSupplierId(data.supplier_id || null);
+        setPrSupplierInfo({});
+        // Fetch all suppliers and inventory items for dropdowns
+        fetchPRDropdownData(data.supplier_id);
       }
-      // entityType === 'classification': mainData is all that's needed, no extra fetches
     }
   }, [isOpen, data, entityType]);
 
@@ -167,6 +196,87 @@ const EditPanel: React.FC<EditPanelProps> = ({
     } finally {
       setLoadingRelated(false);
     }
+  };
+
+  // Fetch all suppliers (with contact details) and inventory items for PR editing dropdowns
+  const fetchPRDropdownData = async (currentSupplierId?: number) => {
+    setLoadingPRDropdowns(true);
+    try {
+      const [suppliersResult, itemsResult] = await Promise.all([
+        apiGetSuppliersWithDetails(),
+        apiGetInventoryItems(),
+      ]);
+
+      if (suppliersResult.success) {
+        const suppliers = suppliersResult.data || [];
+        setAllSuppliers(suppliers);
+        // Pre-fill supplier info display from current selection
+        if (currentSupplierId) {
+          const found = suppliers.find((s: any) => s.supplier_id === currentSupplierId);
+          if (found) setPrSupplierInfo(found);
+        }
+      }
+
+      if (itemsResult.success) {
+        setAllInventoryItems(itemsResult.data || []);
+      }
+    } catch (err: any) {
+      console.error('Error fetching PR dropdown data:', err);
+    } finally {
+      setLoadingPRDropdowns(false);
+    }
+  };
+
+  // Handle supplier selection on Supplier tab – auto-fills read-only contact fields
+  const handlePRSupplierChange = (supplierId: number | null) => {
+    setPrSupplierId(supplierId);
+    if (supplierId) {
+      const sup = allSuppliers.find((s: any) => s.supplier_id === supplierId);
+      if (sup) setPrSupplierInfo(sup);
+    } else {
+      setPrSupplierInfo({});
+    }
+  };
+
+  // Handle item_name selection on Items tab – auto-fills item_id, item_description, uom
+  const handlePRItemNameChange = (index: number, newItemId: number | string) => {
+    const invItem = allInventoryItems.find((i: any) => i.item_id === Number(newItemId));
+    if (!invItem) return;
+    setPrItems(prev =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              item_id: invItem.item_id,
+              item_name: invItem.item_name,
+              item_description: invItem.description || '',
+              uom: invItem.uom || '',
+            }
+          : item
+      )
+    );
+  };
+
+  // Handle pri_quantity change on Items tab – updates quantity for a single line item
+  const handlePRItemQuantityChange = (index: number, value: string) => {
+    setPrItems(prev =>
+      prev.map((item, i) => (i === index ? { ...item, pri_quantity: value } : item))
+    );
+  };
+
+  // Refresh button per item – re-pulls description and uom from allInventoryItems using current item_id
+  const handleRefreshItem = (index: number) => {
+    const item = prItems[index];
+    if (!item?.item_id) return;
+    const invItem = allInventoryItems.find((i: any) => i.item_id === item.item_id);
+    if (!invItem) return;
+    setPrItems(prev =>
+      prev.map((it, i) =>
+        i === index
+          ? { ...it, item_description: invItem.description || '', uom: invItem.uom || '' }
+          : it
+      )
+    );
   };
 
   // When classification selection changes, update title/desc (inventory only)
@@ -316,6 +426,29 @@ const EditPanel: React.FC<EditPanelProps> = ({
         });
 
         if (!result.success) throw new Error(result.message || 'Failed to update classification');
+      } else if (entityType === 'purchase_request') {
+        // Build items payload, parsing quantity to float for each line item
+        const itemsPayload = prItems.map(item => ({
+          pri_id: item.pri_id,
+          item_id: item.item_id || null,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || null,
+          pri_quantity: parseFloat(item.pri_quantity),
+        }));
+
+        // Call backend API to update PR header + line items (automatically creates log entry)
+        const result = await apiUpdatePurchaseRequest({
+          pr_id: data.pr_id,
+          reference_no: mainData.reference_no,
+          terms: mainData.terms,
+          remarks: mainData.remarks,
+          status: mainData.status,
+          supplier_id: prSupplierId !== undefined ? prSupplierId : undefined,
+          items: itemsPayload,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update purchase request');
       }
 
       // Refresh parent list
@@ -428,91 +561,120 @@ const EditPanel: React.FC<EditPanelProps> = ({
           </button>
         </div>
 
-        {/* Tabs Section (fixed, doesn't scroll) */}
-        {!isPurchaseRequest && (
-          <div className="flex-shrink-0 bg-white border-b border-gray-200 px-4 py-2">
-            <nav className="-mb-px flex flex-wrap gap-2">
+        {/* Tabs Section (fixed, doesn't scroll) – all entity types now have tabs */}
+        <div className="flex-shrink-0 bg-white border-b border-gray-200 px-4 py-2">
+          <nav className="-mb-px flex flex-wrap gap-2">
+            {/* Main tab: present for every entity type */}
+            <button
+              onClick={() => setActiveTab('main')}
+              className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                activeTab === 'main'
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Main
+            </button>
+
+            {/* Inventory-only tabs */}
+            {isInventory && (
+              <>
                 <button
-                  onClick={() => setActiveTab('main')}
+                  onClick={() => setActiveTab('quantity')}
                   className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                    activeTab === 'main'
+                    activeTab === 'quantity'
                       ? 'border-primary-500 text-primary-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Main
+                  Quantity
                 </button>
-                {isInventory && (
-                  <>
-                    <button
-                      onClick={() => setActiveTab('quantity')}
-                      className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                        activeTab === 'quantity'
-                          ? 'border-primary-500 text-primary-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      Quantity
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('classification')}
-                      className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                        activeTab === 'classification'
-                          ? 'border-primary-500 text-primary-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      Classification
-                    </button>
-                  </>
-                )}
-                {isCustomerSupplier && (
-                  <>
-                    <button
-                      onClick={() => setActiveTab('bank')}
-                      className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                        activeTab === 'bank'
-                          ? 'border-primary-500 text-primary-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      Bank
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('contact')}
-                      className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                        activeTab === 'contact'
-                          ? 'border-primary-500 text-primary-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      Contact
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('tax')}
-                      className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                        activeTab === 'tax'
-                          ? 'border-primary-500 text-primary-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      Tax
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('liabilities')}
-                      className={`py-1 px-3 border-b-2 font-medium text-sm ${
-                        activeTab === 'liabilities'
-                          ? 'border-primary-500 text-primary-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                    >
-                      Liabilities
-                    </button>
-                  </>
-                )}
-              </nav>
-            </div>
-          )}
+                <button
+                  onClick={() => setActiveTab('classification')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'classification'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Classification
+                </button>
+              </>
+            )}
+
+            {/* Customer/Supplier-only tabs */}
+            {isCustomerSupplier && (
+              <>
+                <button
+                  onClick={() => setActiveTab('bank')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'bank'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Bank
+                </button>
+                <button
+                  onClick={() => setActiveTab('contact')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'contact'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Contact
+                </button>
+                <button
+                  onClick={() => setActiveTab('tax')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'tax'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Tax
+                </button>
+                <button
+                  onClick={() => setActiveTab('liabilities')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'liabilities'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Liabilities
+                </button>
+              </>
+            )}
+
+            {/* Purchase Request-only tabs */}
+            {isPurchaseRequest && (
+              <>
+                <button
+                  onClick={() => setActiveTab('items')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'items'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Items
+                </button>
+                <button
+                  onClick={() => setActiveTab('supplier')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'supplier'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Supplier
+                </button>
+              </>
+            )}
+          </nav>
+        </div>
 
         {/* Scrollable content area */}
         <div className="flex-1 overflow-y-auto p-4">
@@ -526,8 +688,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
           {/* Form content - single column layout */}
           <div className="space-y-4">
-          {/* MAIN TAB (common for all) */}
-            {(activeTab === 'main' || isPurchaseRequest) && (
+          {/* MAIN TAB (common for all entity types) */}
+            {activeTab === 'main' && (
               <div className="space-y-4">
                 {isInventory && (
                   <>
@@ -635,7 +797,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 )}
                 {isPurchaseRequest && (
                   <>
-                    {/* PR Number (Read-Only) */}
+                    {/* PR Number – system-generated, cannot be changed */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">PR Number</label>
                       <input
@@ -645,7 +807,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                       />
                     </div>
-                    {/* Reference Number */}
+                    {/* Reference Number – user-defined identifier, freely editable */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
                       <input
@@ -653,10 +815,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         value={mainData.reference_no || ''}
                         onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading || mainData.status !== 'draft'}
+                        disabled={loading}
                       />
                     </div>
-                    {/* Terms */}
+                    {/* Terms – payment/delivery terms e.g. "Net 30 days" */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
                       <input
@@ -665,10 +827,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
                         placeholder="e.g., Net 30 days"
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading || mainData.status !== 'draft'}
+                        disabled={loading}
                       />
                     </div>
-                    {/* Remarks */}
+                    {/* Remarks – free-text note printed on the PR document */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
                       <textarea
@@ -676,30 +838,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
                         rows={3}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading || mainData.status !== 'draft'}
+                        disabled={loading}
                       />
                     </div>
-                    {/* Status */}
+                    {/* Status dropdown – all 4 lifecycle statuses are selectable */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
                         value={mainData.status || 'draft'}
                         onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        disabled={loading || mainData.status === 'closed'}
+                        disabled={loading}
                       >
                         <option value="draft">Draft</option>
                         <option value="sent">Sent</option>
                         <option value="received">Received</option>
                         <option value="closed">Closed</option>
                       </select>
-                    </div>
-                    {/* Supplier */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
-                      <div className="text-sm text-gray-600 py-2 px-3 border border-gray-300 rounded-md bg-gray-50">
-                        {mainData.supplier_company_name || 'No supplier selected'}
-                      </div>
                     </div>
                   </>
                 )}
@@ -1075,6 +1230,200 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 </>
                 )}
             </div>
+            )}
+
+            {/* PURCHASE REQUEST ITEMS TAB */}
+            {isPurchaseRequest && activeTab === 'items' && (
+              <div className="space-y-4">
+                {loadingPRDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading items...</div>
+                ) : prItems.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-4 text-center">No items in this purchase request.</p>
+                ) : (
+                  prItems.map((item, index) => (
+                    // Card for each line item with editable item_name and pri_quantity
+                    <div key={item.pri_id} className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                      {/* Card header: line number + Refresh button */}
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Line Item {index + 1}
+                        </span>
+                        {/* Refresh button re-fetches description and uom from current inventory data */}
+                        <button
+                          type="button"
+                          onClick={() => handleRefreshItem(index)}
+                          disabled={loading || !item.item_id}
+                          className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                          title="Refresh description and UOM from inventory"
+                        >
+                          {/* Refresh (circular arrows) icon */}
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Refresh
+                        </button>
+                      </div>
+
+                      {/* Item Name – select from inventory; displays as item_name(item_description) */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                        <select
+                          value={item.item_id || ''}
+                          onChange={(e) => handlePRItemNameChange(index, e.target.value)}
+                          disabled={loading}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                        >
+                          {/* Show current item_name when no item_id or item not in catalogue */}
+                          {!item.item_id && (
+                            <option value="">{item.item_name || '— Select item —'}</option>
+                          )}
+                          {allInventoryItems.map((inv: any) => (
+                            <option key={inv.item_id} value={inv.item_id}>
+                              {/* Format: item_name(description) or just item_name if description is empty */}
+                              {inv.description ? `${inv.item_name}(${inv.description})` : inv.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Item ID – read-only, auto-filled from selected inventory item */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                        <input
+                          type="text"
+                          value={item.item_id || ''}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+
+                      {/* Item Description – read-only snapshot; blank if empty */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
+                        <input
+                          type="text"
+                          value={item.item_description || ''}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+
+                      {/* UOM – read-only snapshot; auto-filled from selected inventory item */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                        <input
+                          type="text"
+                          value={item.uom || ''}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+
+                      {/* Quantity – editable, must be a positive number */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0.01"
+                          value={item.pri_quantity}
+                          onChange={(e) => handlePRItemQuantityChange(index, e.target.value)}
+                          disabled={loading}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* PURCHASE REQUEST SUPPLIER TAB */}
+            {isPurchaseRequest && activeTab === 'supplier' && (
+              <div className="space-y-4">
+                {loadingPRDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading suppliers...</div>
+                ) : (
+                  <>
+                    {/* Company – select from supplier list; displays as company_name(register_no_new) */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                      <select
+                        value={prSupplierId || ''}
+                        onChange={(e) => handlePRSupplierChange(e.target.value ? Number(e.target.value) : null)}
+                        disabled={loading}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      >
+                        <option value="">— No supplier selected —</option>
+                        {allSuppliers.map((sup: any) => (
+                          <option key={sup.supplier_id} value={sup.supplier_id}>
+                            {/* Format: company_name(register_no_new) or just company_name if no reg no */}
+                            {sup.register_no_new
+                              ? `${sup.company_name}(${sup.register_no_new})`
+                              : sup.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Supplier ID – read-only, auto-filled from selected supplier */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Supplier ID</label>
+                      <input
+                        type="text"
+                        value={prSupplierId || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+
+                    {/* Register No – read-only, auto-filled from selected supplier */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                      <input
+                        type="text"
+                        value={prSupplierInfo.register_no_new || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+
+                    {/* Email – read-only, auto-filled from supplier's contact_info */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input
+                        type="text"
+                        value={prSupplierInfo.email || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+
+                    {/* Phone – read-only, auto-filled from supplier's contact_info */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input
+                        type="text"
+                        value={prSupplierInfo.phone || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+
+                    {/* Address – read-only, auto-filled from supplier's contact_info */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={prSupplierInfo.address || ''}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
             )}
 
             {/* LIABILITIES TAB (customer/supplier) */}

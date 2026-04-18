@@ -115,6 +115,51 @@ export const apiGetInventoryItems = async (): Promise<ApiResponse<any[]>> => {
 };
 
 /**
+ * Fetch all suppliers with contact details for EditPanel Supplier tab dropdown.
+ */
+export const apiGetSuppliersWithDetails = async (): Promise<ApiResponse<any[]>> => {
+  try {
+    const response = await fetch(`${API_URL}/purchase-request/suppliers-details`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, message: data.message || 'Failed to fetch supplier details' };
+    }
+    return { success: true, data: data.data };
+  } catch (error: any) {
+    console.error('Error fetching supplier details:', error);
+    return { success: false, message: error.message || 'Failed to fetch supplier details' };
+  }
+};
+
+/**
+ * Update an existing purchase request header and its line items (automatically logged).
+ */
+export const apiUpdatePurchaseRequest = async (payload: any): Promise<ApiResponse<any>> => {
+  try {
+    const userId = await getUserId();
+    const response = await fetch(`${API_URL}/purchase-request/update`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': userId,
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, message: data.message || 'Failed to update purchase request' };
+    }
+    return { success: true, message: data.message };
+  } catch (error: any) {
+    console.error('Error updating purchase request:', error);
+    return { success: false, message: error.message || 'Failed to update purchase request' };
+  }
+};
+
+/**
  * Create new purchase request and its line items via backend (automatically logged).
  */
 export const apiCreatePurchaseRequest = async (payload: any): Promise<ApiResponse<any>> => {
