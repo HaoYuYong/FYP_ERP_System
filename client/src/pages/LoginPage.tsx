@@ -37,6 +37,11 @@ const LoginPage: React.FC = () => {
         return;
       }
 
+      // Persist user ID so API clients can send it as x-user-id for audit logging
+      if (result.user?.id) {
+        localStorage.setItem('userId', result.user.id);
+      }
+
       // Redirect based on user role returned from backend
       switch (result.user?.role) {
         case 'admin':

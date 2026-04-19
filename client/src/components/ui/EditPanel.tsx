@@ -822,8 +822,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
         if (!result.success) throw new Error(result.message || 'Failed to delete classification');
       }
 
-      onDelete(); // Refresh list
-      onClose();  // Close panel
+      onDelete?.(); // Refresh list
+      onClose();    // Close panel
     } catch (err: any) {
       setError(err.message);
       console.error('Delete error:', err);
@@ -1193,6 +1193,26 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                       />
                     </div>
+                    {/* Created By – who originally created this PR */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Created By</label>
+                      <input
+                        type="text"
+                        value={data?.created_by_name || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    {/* Date – when this PR was first created */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                      <input
+                        type="text"
+                        value={data?.created_at ? new Date(data.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
                     {/* Reference Number – editable in Draft only */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
@@ -1256,6 +1276,26 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                       />
                     </div>
+                    {/* Created By – who originally created this PO */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Created By</label>
+                      <input
+                        type="text"
+                        value={data?.created_by_name || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    {/* Date – when this PO was first created */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                      <input
+                        type="text"
+                        value={data?.created_at ? new Date(data.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
                     {/* Reference Number – editable in Draft only */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
@@ -1309,18 +1349,6 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         rows={3}
                         className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         disabled={loading || !isPOFieldsEditable}
-                      />
-                    </div>
-                    {/* Total Amount – read-only, recalculated from line items on each update */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount (RM)</label>
-                      <input
-                        type="text"
-                        value={mainData.total_amount !== undefined && mainData.total_amount !== null
-                          ? Number(mainData.total_amount).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                          : '0.00'}
-                        readOnly
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                       />
                     </div>
                     {/* Status – editable in Draft/Sent/Confirmed/Received; locked when Closed */}
@@ -1795,9 +1823,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         </div>
                       )}
 
-                      {/* Item Name – select from inventory; editable in Draft only */}
+                      {/* Item Selecting – select from inventory; editable in Draft only */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Selecting</label>
                         <select
                           value={item.item_id || ''}
                           onChange={(e) => handlePRItemNameChange(index, e.target.value)}
@@ -1828,14 +1856,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         />
                       </div>
 
-                      {/* Item Description – read-only snapshot; blank if empty */}
+                      {/* Item Description – shows item_name then item_description on next line */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
-                        <input
-                          type="text"
-                          value={item.item_description || ''}
+                        <textarea
+                          value={[item.item_name, item.item_description].filter(Boolean).join('\n')}
                           readOnly
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm resize-none"
                         />
                       </div>
 
@@ -2058,9 +2086,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         </div>
                       )}
 
-                      {/* Item Name dropdown */}
+                      {/* Item Selecting dropdown */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Selecting</label>
                         <select
                           value={item.item_id || ''}
                           onChange={(e) => handlePOItemNameChange(index, e.target.value)}
@@ -2085,11 +2113,15 @@ const EditPanel: React.FC<EditPanelProps> = ({
                           className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
                       </div>
 
-                      {/* Item Description (read-only) */}
+                      {/* Item Description – shows item_name then item_description on next line */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
-                        <input type="text" value={item.item_description || ''} readOnly
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                        <textarea
+                          value={[item.item_name, item.item_description].filter(Boolean).join('\n')}
+                          readOnly
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm resize-none"
+                        />
                       </div>
 
                       {/* UOM (read-only) */}
@@ -2115,7 +2147,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
                       {/* Unit Price – editable in Draft */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price (RM)</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
                         <input
                           type="number"
                           step="any"
@@ -2127,23 +2159,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         />
                       </div>
 
-                      {/* Discount – editable in Draft */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount (RM)</label>
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={item.discount}
-                          onChange={(e) => handlePOItemFieldChange(index, 'discount', e.target.value)}
-                          disabled={loading || !isPOFieldsEditable}
-                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
-                        />
-                      </div>
-
                       {/* Line Total (read-only, auto-calculated) */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Line Total (RM)</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Total</label>
                         <input type="text"
                           value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           readOnly
@@ -2304,7 +2322,21 @@ const EditPanel: React.FC<EditPanelProps> = ({
         </div>
 
         {/* Footer with action buttons (fixed at bottom) */}
-        <div className="flex-shrink-0 bg-white border-t border-gray-200 p-4 flex justify-end space-x-3">
+        <div className="flex-shrink-0 bg-white border-t border-gray-200 p-4 flex justify-between items-center">
+          {/* Total Amount – visible from any tab for PO */}
+          {isPurchaseOrder ? (
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500">Total Amount</span>
+              <span className="text-base font-semibold text-gray-800">
+                {mainData.total_amount !== undefined && mainData.total_amount !== null
+                  ? Number(mainData.total_amount).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : '0.00'}
+              </span>
+            </div>
+          ) : (
+            <div />
+          )}
+          <div className="flex space-x-3">
           <button
             onClick={onClose}
             className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
@@ -2345,6 +2377,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
               'Update'
             )}
           </button>
+          </div>
         </div>
       </div>
 

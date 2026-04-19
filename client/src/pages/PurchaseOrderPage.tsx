@@ -324,7 +324,6 @@ const PurchaseOrderPage: React.FC = () => {
       uom: '',
       poi_quantity: '',
       unit_price: '',
-      discount: '',
     });
     setItemError('');
   };
@@ -460,7 +459,7 @@ const PurchaseOrderPage: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Delivery Date</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total (RM)</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
@@ -712,7 +711,7 @@ const PurchaseOrderPage: React.FC = () => {
 
               {/* Unit Price */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price (RM)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
                 <input
                   type="text"
                   name="unit_price"
@@ -725,7 +724,7 @@ const PurchaseOrderPage: React.FC = () => {
 
               {/* Line Total (read-only, auto-calculated) */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Line Total (RM)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Total</label>
                 <input
                   type="text"
                   value={formatCurrency(

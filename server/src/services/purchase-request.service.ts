@@ -60,11 +60,11 @@ export const createPurchaseRequest = async (
     // Insert purchase_request header record with supplier snapshot columns.
     const prQuery = `
       INSERT INTO purchase_request (
-        pr_no, reference_no, supplier_id, remarks, status,
+        pr_no, reference_no, supplier_id, remarks, status, created_by,
         supplier_company_name, supplier_register_no, supplier_address, supplier_phone, supplier_email
       )
-      VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9)
-      RETURNING pr_id, pr_no, reference_no, supplier_id, remarks, status,
+      VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10)
+      RETURNING pr_id, pr_no, reference_no, supplier_id, remarks, status, created_by,
                 supplier_company_name, supplier_register_no, supplier_address, supplier_phone, supplier_email
     `;
 
@@ -73,6 +73,7 @@ export const createPurchaseRequest = async (
       data.reference_no || null,
       data.supplier_id || null,
       data.remarks || null,
+      userId || null,
       snapshotCompanyName,
       snapshotRegisterNo,
       snapshotAddress,
@@ -185,6 +186,9 @@ export const getPurchaseRequests = async () => {
         pr.supplier_id,
         pr.remarks,
         pr.status,
+        pr.created_by,
+        CONCAT(u.first_name, ' ', u.last_name) AS created_by_name,
+        l.action_at AS created_at,
         COALESCE(pr.supplier_company_name, s.company_name) AS supplier_company_name,
         pr.supplier_register_no,
         pr.supplier_address,
@@ -203,7 +207,10 @@ export const getPurchaseRequests = async () => {
       FROM purchase_request pr
       LEFT JOIN supplier s ON pr.supplier_id = s.supplier_id
       LEFT JOIN purchase_request_item pri ON pr.pr_id = pri.pr_id
+      LEFT JOIN users u ON pr.created_by = u.auth_id
+      LEFT JOIN log l ON pr.log_id = l.log_id
       GROUP BY pr.pr_id, pr.pr_no, pr.reference_no, pr.terms, pr.supplier_id, pr.remarks, pr.status,
+               pr.created_by, u.first_name, u.last_name, l.action_at,
                pr.supplier_company_name, s.company_name, pr.supplier_register_no,
                pr.supplier_address, pr.supplier_phone, pr.supplier_email
       ORDER BY pr.pr_no DESC

@@ -7,6 +7,8 @@ import { supabase } from './supabase';
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 const getUserId = async (): Promise<string> => {
+  const stored = localStorage.getItem('userId');
+  if (stored) return stored;
   const { data } = await supabase.auth.getUser();
   return data.user?.id || 'anonymous';
 };

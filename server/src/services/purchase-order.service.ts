@@ -71,10 +71,10 @@ export const createPurchaseOrder = async (
     const poQuery = `
       INSERT INTO purchase_order (
         po_no, reference_no, terms, delivery_date, supplier_id, pr_id, remarks, status,
-        total_amount, supplier_company_name, supplier_register_no,
+        total_amount, created_by, supplier_company_name, supplier_register_no,
         supplier_address, supplier_phone, supplier_email
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
     `;
     const poResult = await client.query(poQuery, [
@@ -86,6 +86,7 @@ export const createPurchaseOrder = async (
       data.pr_id || null,
       data.remarks || null,
       totalAmount,
+      userId || null,
       snapshotCompanyName,
       snapshotRegisterNo,
       snapshotAddress,
@@ -188,6 +189,9 @@ export const getPurchaseOrders = async () => {
         po.remarks,
         po.status,
         po.total_amount,
+        po.created_by,
+        CONCAT(u.first_name, ' ', u.last_name) AS created_by_name,
+        l.action_at AS created_at,
         COALESCE(po.supplier_company_name, s.company_name) AS supplier_company_name,
         po.supplier_register_no,
         po.supplier_address,
@@ -210,8 +214,11 @@ export const getPurchaseOrders = async () => {
       FROM purchase_order po
       LEFT JOIN supplier s ON po.supplier_id = s.supplier_id
       LEFT JOIN purchase_order_item poi ON po.po_id = poi.po_id
+      LEFT JOIN users u ON po.created_by = u.auth_id
+      LEFT JOIN log l ON po.log_id = l.log_id
       GROUP BY po.po_id, po.po_no, po.reference_no, po.terms, po.delivery_date,
                po.supplier_id, po.pr_id, po.remarks, po.status, po.total_amount,
+               po.created_by, u.first_name, u.last_name, l.action_at,
                po.supplier_company_name, s.company_name, po.supplier_register_no,
                po.supplier_address, po.supplier_phone, po.supplier_email
       ORDER BY po.po_no DESC
