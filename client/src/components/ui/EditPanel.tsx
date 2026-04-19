@@ -95,6 +95,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // Loading state while fetching PR dropdown data
   const [loadingPRDropdowns, setLoadingPRDropdowns] = useState(false);
 
+  // Refresh item confirmation dialog state (PR Items tab)
+  const [prRefreshConfirmOpen, setPrRefreshConfirmOpen] = useState(false);
+  const [prRefreshPendingIndex, setPrRefreshPendingIndex] = useState<number | null>(null);
+  const [prRefreshPendingData, setPrRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
+  const [prRefreshDiff, setPrRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
+  // Per-item inline messages: key = pri_id or _tempId or index; value = { type, text }
+  const [prItemMessages, setPrItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
+
   // ==============================================
   // PURCHASE ORDER EDITING STATE
   // ==============================================
@@ -105,6 +113,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [allPOSuppliers, setAllPOSuppliers] = useState<any[]>([]);
   const [allPOInventoryItems, setAllPOInventoryItems] = useState<any[]>([]);
   const [loadingPODropdowns, setLoadingPODropdowns] = useState(false);
+
+  // Refresh item confirmation dialog state (PO Items tab)
+  const [poRefreshConfirmOpen, setPoRefreshConfirmOpen] = useState(false);
+  const [poRefreshPendingIndex, setPoRefreshPendingIndex] = useState<number | null>(null);
+  const [poRefreshPendingData, setPoRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
+  const [poRefreshDiff, setPoRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
+  const [poItemMessages, setPoItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
 
   // ==============================================
   // EFFECTS – Load data when panel opens
@@ -323,19 +338,85 @@ const EditPanel: React.FC<EditPanelProps> = ({
     setPrItems(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Refresh button per item – re-pulls description and uom from allInventoryItems using current item_id
+  // Helper to get a stable per-item message key
+  const prItemKey = (item: any, index: number): string =>
+    String(item.pri_id ?? item._tempId ?? index);
+
+  // Helper to show a timed inline message on a PR item card, then auto-clear after 3 s
+  const showPrItemMessage = (key: string, type: 'info' | 'success', text: string) => {
+    setPrItemMessages(prev => ({ ...prev, [key]: { type, text } }));
+    setTimeout(() => {
+      setPrItemMessages(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 3000);
+  };
+
+  // Refresh button per item – compares current values against inventory and shows a diff dialog
   const handleRefreshItem = (index: number) => {
     const item = prItems[index];
     if (!item?.item_id) return;
     const invItem = allInventoryItems.find((i: any) => i.item_id === item.item_id);
     if (!invItem) return;
+
+    const key = prItemKey(item, index);
+
+    // Build diff: compare item_name, item_description, uom
+    const candidateName = invItem.item_name || '';
+    const candidateDesc = invItem.description || '';
+    const candidateUom  = invItem.uom || '';
+
+    const currentName = item.item_name || '';
+    const currentDesc = item.item_description || '';
+    const currentUom  = item.uom || '';
+
+    const diff: { label: string; before: string; after: string }[] = [];
+    if (currentName !== candidateName) diff.push({ label: 'Item Name',        before: currentName, after: candidateName });
+    if (currentDesc !== candidateDesc) diff.push({ label: 'Item Description', before: currentDesc, after: candidateDesc });
+    if (currentUom  !== candidateUom)  diff.push({ label: 'UOM',              before: currentUom,  after: candidateUom });
+
+    if (diff.length === 0) {
+      showPrItemMessage(key, 'info', 'Item is already up to date.');
+      return;
+    }
+
+    // Store pending data and open confirmation dialog
+    setPrRefreshPendingIndex(index);
+    setPrRefreshPendingData({ item_name: candidateName, item_description: candidateDesc, uom: candidateUom });
+    setPrRefreshDiff(diff);
+    setPrRefreshConfirmOpen(true);
+  };
+
+  // Apply the refresh if user confirms
+  const handleRefreshItemConfirm = () => {
+    if (prRefreshPendingIndex === null || !prRefreshPendingData) return;
+    const index = prRefreshPendingIndex;
+    const item = prItems[index];
+    const key = prItemKey(item, index);
+
     setPrItems(prev =>
       prev.map((it, i) =>
         i === index
-          ? { ...it, item_description: invItem.description || '', uom: invItem.uom || '' }
+          ? { ...it, ...prRefreshPendingData }
           : it
       )
     );
+
+    setPrRefreshConfirmOpen(false);
+    setPrRefreshPendingIndex(null);
+    setPrRefreshPendingData(null);
+    setPrRefreshDiff([]);
+    showPrItemMessage(key, 'success', 'Item refreshed successfully.');
+  };
+
+  // Cancel the refresh — no changes
+  const handleRefreshItemCancel = () => {
+    setPrRefreshConfirmOpen(false);
+    setPrRefreshPendingIndex(null);
+    setPrRefreshPendingData(null);
+    setPrRefreshDiff([]);
   };
 
   // Refresh button for supplier – re-pulls contact details from allSuppliers using current prSupplierId
@@ -418,18 +499,76 @@ const EditPanel: React.FC<EditPanelProps> = ({
     setPoItems(prev => prev.filter((_, i) => i !== index));
   };
 
+  const poItemKey = (item: any, index: number): string =>
+    String(item.poi_id ?? item._tempId ?? index);
+
+  const showPoItemMessage = (key: string, type: 'info' | 'success', text: string) => {
+    setPoItemMessages(prev => ({ ...prev, [key]: { type, text } }));
+    setTimeout(() => {
+      setPoItemMessages(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 3000);
+  };
+
   const handleRefreshPOItem = (index: number) => {
     const item = poItems[index];
     if (!item?.item_id) return;
     const invItem = allPOInventoryItems.find((i: any) => i.item_id === item.item_id);
     if (!invItem) return;
+
+    const key = poItemKey(item, index);
+
+    const candidateName = invItem.item_name || '';
+    const candidateDesc = invItem.description || '';
+    const candidateUom  = invItem.uom || '';
+
+    const currentName = item.item_name || '';
+    const currentDesc = item.item_description || '';
+    const currentUom  = item.uom || '';
+
+    const diff: { label: string; before: string; after: string }[] = [];
+    if (currentName !== candidateName) diff.push({ label: 'Item Name',        before: currentName, after: candidateName });
+    if (currentDesc !== candidateDesc) diff.push({ label: 'Item Description', before: currentDesc, after: candidateDesc });
+    if (currentUom  !== candidateUom)  diff.push({ label: 'UOM',              before: currentUom,  after: candidateUom });
+
+    if (diff.length === 0) {
+      showPoItemMessage(key, 'info', 'Item is already up to date.');
+      return;
+    }
+
+    setPoRefreshPendingIndex(index);
+    setPoRefreshPendingData({ item_name: candidateName, item_description: candidateDesc, uom: candidateUom });
+    setPoRefreshDiff(diff);
+    setPoRefreshConfirmOpen(true);
+  };
+
+  const handleRefreshPOItemConfirm = () => {
+    if (poRefreshPendingIndex === null || !poRefreshPendingData) return;
+    const index = poRefreshPendingIndex;
+    const item = poItems[index];
+    const key = poItemKey(item, index);
+
     setPoItems(prev =>
       prev.map((it, i) =>
-        i === index
-          ? { ...it, item_description: invItem.description || '', uom: invItem.uom || '' }
-          : it
+        i === index ? { ...it, ...poRefreshPendingData } : it
       )
     );
+
+    setPoRefreshConfirmOpen(false);
+    setPoRefreshPendingIndex(null);
+    setPoRefreshPendingData(null);
+    setPoRefreshDiff([]);
+    showPoItemMessage(key, 'success', 'Item refreshed successfully.');
+  };
+
+  const handleRefreshPOItemCancel = () => {
+    setPoRefreshConfirmOpen(false);
+    setPoRefreshPendingIndex(null);
+    setPoRefreshPendingData(null);
+    setPoRefreshDiff([]);
   };
 
   // When classification selection changes, update title/desc (inventory only)
@@ -1645,6 +1784,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         </div>
                       </div>
 
+                      {/* Inline feedback message after Refresh action */}
+                      {prItemMessages[prItemKey(item, index)] && (
+                        <div className={`text-xs px-3 py-1.5 rounded-md ${
+                          prItemMessages[prItemKey(item, index)].type === 'success'
+                            ? 'bg-green-50 border border-green-200 text-green-700'
+                            : 'bg-blue-50 border border-blue-200 text-blue-700'
+                        }`}>
+                          {prItemMessages[prItemKey(item, index)].text}
+                        </div>
+                      )}
+
                       {/* Item Name – select from inventory; editable in Draft only */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
@@ -1896,6 +2046,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
                           )}
                         </div>
                       </div>
+
+                      {/* Inline feedback message after Refresh action */}
+                      {poItemMessages[poItemKey(item, index)] && (
+                        <div className={`text-xs px-3 py-1.5 rounded-md ${
+                          poItemMessages[poItemKey(item, index)].type === 'success'
+                            ? 'bg-green-50 border border-green-200 text-green-700'
+                            : 'bg-blue-50 border border-blue-200 text-blue-700'
+                        }`}>
+                          {poItemMessages[poItemKey(item, index)].text}
+                        </div>
+                      )}
 
                       {/* Item Name dropdown */}
                       <div>
@@ -2186,6 +2347,70 @@ const EditPanel: React.FC<EditPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {/* PR item refresh confirmation dialog – shows before/after diff */}
+      <ConfirmationDialog
+        isOpen={prRefreshConfirmOpen}
+        message="The following fields will be overwritten with the latest values from inventory:"
+        confirmLabel="Yes, Refresh"
+        cancelLabel="Cancel"
+        onConfirm={handleRefreshItemConfirm}
+        onCancel={handleRefreshItemCancel}
+        content={
+          <div className="border border-gray-200 rounded-md overflow-hidden text-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Field</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Current Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">New Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {prRefreshDiff.map((row, i) => (
+                  <tr key={i} className="bg-white">
+                    <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
+                    <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{row.after || <span className="italic text-gray-400">empty</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
+
+      {/* PO item refresh confirmation dialog – shows before/after diff */}
+      <ConfirmationDialog
+        isOpen={poRefreshConfirmOpen}
+        message="The following fields will be overwritten with the latest values from inventory:"
+        confirmLabel="Yes, Refresh"
+        cancelLabel="Cancel"
+        onConfirm={handleRefreshPOItemConfirm}
+        onCancel={handleRefreshPOItemCancel}
+        content={
+          <div className="border border-gray-200 rounded-md overflow-hidden text-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Field</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Current Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">New Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {poRefreshDiff.map((row, i) => (
+                  <tr key={i} className="bg-white">
+                    <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
+                    <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{row.after || <span className="italic text-gray-400">empty</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
 
       {/* Delete confirmation dialog */}
       <ConfirmationDialog
