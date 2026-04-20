@@ -483,7 +483,7 @@ const PurchaseRequestPage: React.FC = () => {
       {/* Displays title with back button and action    */}
       {/* buttons on the right (Add New, Refresh List)   */}
       {/* ============================================== */}
-      <PageHeader title="Purchase Request" onBack={handleBack} onRefresh={fetchPurchaseRequests}>
+      <PageHeader title="Purchase Request Management" onBack={handleBack} onRefresh={fetchPurchaseRequests}>
         {/* Add New dropdown container - click outside closes dropdown */}
         <div className="relative" ref={addMenuRef}>
           {/* Add New toggle button - clicking opens/closes the dropdown */}

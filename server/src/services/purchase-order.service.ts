@@ -28,6 +28,18 @@ export const createPurchaseOrder = async (
   try {
     await client.query('BEGIN');
 
+    // Safety check: if pr_id given, ensure it has not already been converted
+    if (data.pr_id) {
+      const prCheck = await client.query(
+        'SELECT generated_po_id FROM purchase_request WHERE pr_id = $1 FOR UPDATE',
+        [data.pr_id]
+      );
+      if (!prCheck.rows.length) throw new Error('Purchase Request not found');
+      if (prCheck.rows[0].generated_po_id !== null) {
+        throw new Error('This Purchase Request has already been converted to a Purchase Order');
+      }
+    }
+
     // Generate PO number from sequence
     const poNoResult = await client.query(
       "SELECT 'PO-' || LPAD(nextval('seq_po_no')::text, 6, '0') AS po_no"
@@ -162,6 +174,14 @@ export const createPurchaseOrder = async (
       );
     }
 
+    // Lock the originating PR so it cannot be converted again (inside transaction)
+    if (data.pr_id) {
+      await client.query(
+        'UPDATE purchase_request SET generated_po_id = $1 WHERE pr_id = $2',
+        [po.po_id, data.pr_id]
+      );
+    }
+
     await client.query('COMMIT');
     return { ...po, log_id: poLogId, items };
   } catch (error) {
@@ -186,6 +206,7 @@ export const getPurchaseOrders = async () => {
         po.delivery_date,
         po.supplier_id,
         po.pr_id,
+        pr_ref.pr_no AS pr_no,
         po.remarks,
         po.status,
         po.total_amount,
@@ -217,8 +238,9 @@ export const getPurchaseOrders = async () => {
       LEFT JOIN purchase_order_item poi ON po.po_id = poi.po_id
       LEFT JOIN users u ON po.created_by = u.auth_id
       LEFT JOIN log l ON po.log_id = l.log_id
+      LEFT JOIN purchase_request pr_ref ON po.pr_id = pr_ref.pr_id
       GROUP BY po.po_id, po.po_no, po.reference_no, po.terms, po.delivery_date,
-               po.supplier_id, po.pr_id, po.remarks, po.status, po.total_amount,
+               po.supplier_id, po.pr_id, pr_ref.pr_no, po.remarks, po.status, po.total_amount,
                po.created_by, u.first_name, u.last_name, l.action_at,
                po.supplier_company_name, s.company_name, po.supplier_register_no,
                po.supplier_address, po.supplier_phone, po.supplier_email

@@ -186,6 +186,7 @@ export const getPurchaseRequests = async () => {
         pr.supplier_id,
         pr.remarks,
         pr.status,
+        pr.generated_po_id,
         pr.created_by,
         CONCAT(u.first_name, ' ', u.last_name) AS created_by_name,
         l.action_at AS created_at,
@@ -210,7 +211,7 @@ export const getPurchaseRequests = async () => {
       LEFT JOIN users u ON pr.created_by = u.auth_id
       LEFT JOIN log l ON pr.log_id = l.log_id
       GROUP BY pr.pr_id, pr.pr_no, pr.reference_no, pr.terms, pr.supplier_id, pr.remarks, pr.status,
-               pr.created_by, u.first_name, u.last_name, l.action_at,
+               pr.generated_po_id, pr.created_by, u.first_name, u.last_name, l.action_at,
                pr.supplier_company_name, s.company_name, pr.supplier_register_no,
                pr.supplier_address, pr.supplier_phone, pr.supplier_email
       ORDER BY pr.pr_no DESC

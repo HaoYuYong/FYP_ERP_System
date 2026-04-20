@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
   apiUpdateInventoryItem,
@@ -128,6 +128,12 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [poUpdateAgainQuantities, setPoUpdateAgainQuantities] = useState<Record<number, string>>({});
   const [showCloseOutstandingConfirm, setShowCloseOutstandingConfirm] = useState(false);
 
+  // Floating alert reminder state
+  const [showFloatingAlert, setShowFloatingAlert] = useState(false);
+  const [floatingAlertTop, setFloatingAlertTop] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const alertsRef = useRef<HTMLDivElement>(null);
+
   // ==============================================
   // EFFECTS – Load data when panel opens
   // ==============================================
@@ -200,6 +206,22 @@ const EditPanel: React.FC<EditPanelProps> = ({
       setLoadingClasses(false);
     }
   };
+
+  // Scroll handler: show floating alert reminder when alerts scroll out of view
+  const handleContentScroll = useCallback(() => {
+    if (!scrollContainerRef.current || !alertsRef.current) return;
+    const containerRect = scrollContainerRef.current.getBoundingClientRect();
+    const alertsRect = alertsRef.current.getBoundingClientRect();
+    setFloatingAlertTop(containerRect.top);
+    setShowFloatingAlert(alertsRect.bottom < containerRect.top);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen && scrollContainerRef.current) {
+      setFloatingAlertTop(scrollContainerRef.current.getBoundingClientRect().top);
+    }
+    if (!isOpen) setShowFloatingAlert(false);
+  }, [isOpen]);
 
   // Fetch related records for customer/supplier (bank, contact, tax, liabilities)
   const fetchRelatedData = async () => {
@@ -604,6 +626,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
       setMainData({ ...mainData, status: newStatus });
     }
   };
+
+  const poHasEmptyUnitPrice = () =>
+    poItems.some(item => !item.unit_price || parseFloat(item.unit_price) === 0);
 
   const handleCancelReceiving = () => {
     setPoReceivingMode(false);
@@ -1138,52 +1163,61 @@ const EditPanel: React.FC<EditPanelProps> = ({
         )}
 
         {/* Scrollable content area */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {/* Error display */}
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
-              <div className="font-medium">Error</div>
-              <div className="text-sm mt-1">{error}</div>
-            </div>
-          )}
+        <div ref={scrollContainerRef} onScroll={handleContentScroll} className="flex-1 overflow-y-auto p-4">
+          {/* ── Alerts container – ref'd so floating reminder can detect visibility ── */}
+          <div ref={alertsRef}>
+            {/* Error display */}
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
+                <div className="font-medium">Error</div>
+                <div className="text-sm mt-1">{error}</div>
+              </div>
+            )}
+            {/* PR status notice – Sent/Received: only Status editable; Closed: fully locked */}
+            {isPurchaseRequest && !isPRFieldsEditable && isStatusEditable && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                This purchase request is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+              </div>
+            )}
+            {isPurchaseRequest && !isStatusEditable && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                This purchase request is <strong>Closed</strong> and cannot be edited.
+              </div>
+            )}
 
-          {/* PR status notice – Sent/Received: only Status editable; Closed: fully locked */}
-          {isPurchaseRequest && !isPRFieldsEditable && isStatusEditable && (
-            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
-              This purchase request is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
-            </div>
-          )}
-          {isPurchaseRequest && !isStatusEditable && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-              This purchase request is <strong>Closed</strong> and cannot be edited.
-            </div>
-          )}
+            {/* PO status notice */}
+            {isPurchaseOrder && !isPOFieldsEditable && isPOStatusEditable && !poReceivingMode && !poUpdateAgainMode && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                This purchase order is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+              </div>
+            )}
+            {isPurchaseOrder && !isPOStatusEditable && !poReceivingMode && !poUpdateAgainMode && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                This purchase order is <strong>Closed</strong> and cannot be edited.
+              </div>
+            )}
 
-          {/* PO status notice */}
-          {isPurchaseOrder && !isPOFieldsEditable && isPOStatusEditable && !poReceivingMode && !poUpdateAgainMode && (
-            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
-              This purchase order is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
-            </div>
-          )}
-          {isPurchaseOrder && !isPOStatusEditable && !poReceivingMode && !poUpdateAgainMode && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-              This purchase order is <strong>Closed</strong> and cannot be edited.
-            </div>
-          )}
+            {/* PO unit price warning – shown when generated from PR and any item still has no unit price */}
+            {isPurchaseOrder && data?.status === 'draft' && data?.pr_id && poHasEmptyUnitPrice() && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                <strong>Unit prices required.</strong> This Purchase Order was generated from a Purchase Request. Please fill in the <strong>Unit Price</strong> for all items in the Items tab before the status can be updated to <strong>Sent</strong>.
+              </div>
+            )}
 
-          {/* PO over-received warnings */}
-          {isPurchaseOrder && !poReceivingMode && !poUpdateAgainMode &&
-            poItems
-              .filter(item => parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0) < 0)
-              .map(item => {
-                const diff = parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0);
-                return (
-                  <div key={item.poi_id} className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
-                    Item <strong>"{item.item_name}"</strong> has received quantity more than expected quantity, <strong>{Math.abs(diff)}</strong>
-                  </div>
-                );
-              })
-          }
+            {/* PO over-received warnings */}
+            {isPurchaseOrder && !poReceivingMode && !poUpdateAgainMode &&
+              poItems
+                .filter(item => parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0) < 0)
+                .map(item => {
+                  const diff = parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0);
+                  return (
+                    <div key={item.poi_id} className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                      Item <strong>"{item.item_name}"</strong> has received quantity more than expected quantity, <strong>{Math.abs(diff)}</strong>
+                    </div>
+                  );
+                })
+            }
+          </div>
 
           {/* PO Receiving Mode */}
           {isPurchaseOrder && poReceivingMode && (
@@ -1439,7 +1473,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         disabled={loading || !isPRFieldsEditable}
                       />
                     </div>
-                    {/* Status – editable in Draft/Sent/Received; locked when Closed */}
+                    {/* Status – forward-only transitions: Draft→Sent/Closed; Sent→Received/Closed; Received→Closed */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
@@ -1448,10 +1482,11 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         disabled={loading || !isStatusEditable}
                       >
-                        {data?.status !== 'received' && <option value="draft">Draft</option>}
-                        {data?.status !== 'received' && <option value="sent">Sent</option>}
-                        <option value="received">Received</option>
-                        <option value="closed">Closed</option>
+                        <option value={data?.status}>{data?.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Draft'}</option>
+                        {data?.status === 'draft' && <option value="sent">Sent</option>}
+                        {(data?.status === 'draft' || data?.status === 'sent') && data?.status !== 'received' && <option value="closed">Closed</option>}
+                        {data?.status === 'sent' && <option value="received">Received</option>}
+                        {data?.status === 'received' && <option value="closed">Closed</option>}
                       </select>
                     </div>
                   </>
@@ -1527,7 +1562,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                       <label className="block text-sm font-medium text-gray-700 mb-1">PR Reference</label>
                       <input
                         type="text"
-                        value={mainData.pr_id || '—'}
+                        value={mainData.pr_no || '—'}
                         readOnly
                         className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                       />
@@ -1543,7 +1578,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         disabled={loading || !isPOFieldsEditable}
                       />
                     </div>
-                    {/* Status – editable in Draft/Sent/Confirmed/Received; locked when Closed */}
+                    {/* Status – forward-only: Draft→Sent(if unit prices set)/Closed; Sent→Confirmed/Closed; Confirmed→Received/Closed; Received→Closed */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
@@ -1552,11 +1587,12 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         disabled={loading || !isPOStatusEditable}
                       >
-                        {data?.status !== 'received' && <option value="draft">Draft</option>}
-                        {data?.status !== 'received' && <option value="sent">Sent</option>}
-                        {data?.status !== 'received' && <option value="confirmed">Confirmed</option>}
-                        <option value="received">Received</option>
-                        <option value="closed">Closed</option>
+                        <option value={data?.status}>{data?.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Draft'}</option>
+                        {data?.status === 'draft' && !poHasEmptyUnitPrice() && <option value="sent">Sent</option>}
+                        {data?.status === 'sent' && <option value="confirmed">Confirmed</option>}
+                        {data?.status === 'confirmed' && <option value="received">Received</option>}
+                        {(data?.status === 'draft' || data?.status === 'sent' || data?.status === 'confirmed') && <option value="closed">Closed</option>}
+                        {data?.status === 'received' && <option value="closed">Closed</option>}
                       </select>
                     </div>
                     {/* Update Again button – shows when PO is received and has outstanding items */}
@@ -2672,6 +2708,22 @@ const EditPanel: React.FC<EditPanelProps> = ({
         onConfirm={handleConfirmCloseOutstanding}
         onCancel={() => setShowCloseOutstandingConfirm(false)}
       />
+
+      {/* Floating alert reminder – appears to the left of the panel when alerts scroll out of view */}
+      {isOpen && showFloatingAlert && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ right: 'calc(min(100vw, 36rem))', top: `${floatingAlertTop + 12}px` }}
+        >
+          <div className="bg-amber-100 border border-amber-300 text-amber-800 rounded-l-xl shadow-lg px-3 py-2 flex items-center gap-2 text-xs font-medium max-w-[160px]">
+            <svg className="w-4 h-4 flex-shrink-0 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <span>Alert at top ↑</span>
+          </div>
+        </div>
+      )}
     </>
   );
 };
