@@ -208,7 +208,8 @@ export const getPurchaseOrders = async () => {
             'unit_price',        poi.unit_price,
             'discount',          poi.discount,
             'line_total',        poi.line_total,
-            'received_quantity', poi.received_quantity
+            'received_quantity', poi.received_quantity,
+            'quantity_added',    poi.quantity_added
           ) ORDER BY poi.poi_id
         ) FILTER (WHERE poi.poi_id IS NOT NULL) AS items
       FROM purchase_order po
@@ -286,6 +287,7 @@ export const updatePurchaseOrder = async (
       poi_quantity: number;
       unit_price?: number;
       discount?: number;
+      received_quantity?: number;
     }>;
   },
   userId: string
@@ -411,6 +413,10 @@ export const updatePurchaseOrder = async (
           const oldItem = existingItems.find(i => i.poi_id === item.poi_id);
           if (!oldItem) continue;
 
+          const newReceivedQty = item.received_quantity !== undefined
+            ? item.received_quantity
+            : parseFloat(oldItem.received_quantity ?? 0);
+
           const itemChanged =
             String(oldItem.item_id)          !== String(newItemId)   ||
             oldItem.item_name                !== newItemName          ||
@@ -418,15 +424,17 @@ export const updatePurchaseOrder = async (
             oldItem.uom                      !== newUom               ||
             parseFloat(oldItem.poi_quantity) !== newQty               ||
             parseFloat(oldItem.unit_price)   !== newPrice             ||
-            parseFloat(oldItem.discount)     !== newDiscount;
+            parseFloat(oldItem.discount)     !== newDiscount          ||
+            parseFloat(oldItem.received_quantity ?? 0) !== newReceivedQty;
 
           const updatedItemResult = await client.query(`
             UPDATE purchase_order_item
             SET item_id = $2, item_name = $3, item_description = $4,
-                uom = $5, poi_quantity = $6, unit_price = $7, discount = $8, line_total = $9
+                uom = $5, poi_quantity = $6, unit_price = $7, discount = $8, line_total = $9,
+                received_quantity = $10
             WHERE poi_id = $1
             RETURNING *
-          `, [item.poi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newPrice, newDiscount, newLineTotal]);
+          `, [item.poi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newPrice, newDiscount, newLineTotal, newReceivedQty]);
 
           if (itemChanged) {
             await createLog({
@@ -470,6 +478,84 @@ export const updatePurchaseOrder = async (
         'UPDATE purchase_order SET total_amount = $1 WHERE po_id = $2',
         [newTotalAmount, data.po_id]
       );
+
+      // Push stock movements when PO status is 'received'
+      const finalStatus = (headerFields.status as string | undefined) ?? oldPO.status;
+      if (finalStatus === 'received') {
+        const inventoryTableId = await getTableId('inventory');
+        const smTableId = await getTableId('stock_movement');
+
+        const updatedItems = await client.query(
+          `SELECT poi_id, item_id, received_quantity, quantity_added
+           FROM purchase_order_item WHERE po_id = $1`,
+          [data.po_id]
+        );
+
+        for (const poi of updatedItems.rows) {
+          if (!poi.item_id) continue;
+          const delta = parseFloat(poi.received_quantity) - parseFloat(poi.quantity_added);
+          if (delta <= 0) continue;
+
+          const invResult = await client.query(
+            `SELECT quantity FROM inventory WHERE item_id = $1 FOR UPDATE`,
+            [poi.item_id]
+          );
+          if (!invResult.rows.length) continue;
+
+          const qtyBefore = parseFloat(invResult.rows[0].quantity);
+          const qtyAfter  = qtyBefore + delta;
+
+          await client.query(
+            `UPDATE inventory SET quantity = $1 WHERE item_id = $2`,
+            [qtyAfter, poi.item_id]
+          );
+
+          const smResult = await client.query(`
+            INSERT INTO stock_movement
+              (item_id, movement_type, quantity_change, quantity_before, quantity_after, poi_id)
+            VALUES ($1, 'po_receipt', $2, $3, $4, $5)
+            RETURNING movement_id
+          `, [poi.item_id, delta, qtyBefore, qtyAfter, poi.poi_id]);
+
+          const smLogId = await createLog({
+            tableId: smTableId,
+            recordId: String(smResult.rows[0].movement_id),
+            actionType: 'INSERT',
+            actionBy: userId,
+            changedData: {
+              item_id: poi.item_id,
+              movement_type: 'po_receipt',
+              quantity_change: delta,
+              quantity_before: qtyBefore,
+              quantity_after: qtyAfter,
+              poi_id: poi.poi_id,
+            },
+          });
+          await client.query(
+            `UPDATE stock_movement SET log_id = $1 WHERE movement_id = $2`,
+            [smLogId, smResult.rows[0].movement_id]
+          );
+
+          await createLog({
+            tableId: inventoryTableId,
+            recordId: String(poi.item_id),
+            actionType: 'UPDATE',
+            actionBy: userId,
+            changedData: {
+              quantity_before: qtyBefore,
+              quantity_after: qtyAfter,
+              source: 'po_receipt',
+              po_id: data.po_id,
+              poi_id: poi.poi_id,
+            },
+          });
+
+          await client.query(
+            `UPDATE purchase_order_item SET quantity_added = $1 WHERE poi_id = $2`,
+            [poi.received_quantity, poi.poi_id]
+          );
+        }
+      }
     }
 
     await client.query('COMMIT');

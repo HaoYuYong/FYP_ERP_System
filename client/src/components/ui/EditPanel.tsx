@@ -121,6 +121,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [poRefreshDiff, setPoRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
   const [poItemMessages, setPoItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
 
+  // PO Receiving mode state
+  const [poReceivingMode, setPoReceivingMode] = useState(false);
+  const [poReceivingQuantities, setPoReceivingQuantities] = useState<Record<number, string>>({});
+  const [poUpdateAgainMode, setPoUpdateAgainMode] = useState(false);
+  const [poUpdateAgainQuantities, setPoUpdateAgainQuantities] = useState<Record<number, string>>({});
+  const [showCloseOutstandingConfirm, setShowCloseOutstandingConfirm] = useState(false);
+
   // ==============================================
   // EFFECTS – Load data when panel opens
   // ==============================================
@@ -169,6 +176,10 @@ const EditPanel: React.FC<EditPanelProps> = ({
           address:         data.supplier_address      || '',
         });
         fetchPODropdownData();
+        setPoReceivingMode(false);
+        setPoReceivingQuantities({});
+        setPoUpdateAgainMode(false);
+        setPoUpdateAgainQuantities({});
       }
     }
   }, [isOpen, data, entityType]);
@@ -571,6 +582,39 @@ const EditPanel: React.FC<EditPanelProps> = ({
     setPoRefreshDiff([]);
   };
 
+  // ==============================================
+  // PO RECEIVING MODE HELPERS
+  // ==============================================
+
+  const poHasOutstanding = (): boolean =>
+    poItems.some(item => parseFloat(item.received_quantity ?? 0) < parseFloat(item.poi_quantity));
+
+  const poOutstandingItems = () =>
+    poItems.filter(item => parseFloat(item.received_quantity ?? 0) < parseFloat(item.poi_quantity));
+
+  const handlePOStatusChange = (newStatus: string) => {
+    if (newStatus === 'received' && mainData.status !== 'received') {
+      const initialQtys: Record<number, string> = {};
+      poItems.forEach(item => { initialQtys[item.poi_id] = String(item.poi_quantity); });
+      setPoReceivingQuantities(initialQtys);
+      setPoReceivingMode(true);
+    } else if (newStatus === 'closed' && poHasOutstanding()) {
+      setShowCloseOutstandingConfirm(true);
+    } else {
+      setMainData({ ...mainData, status: newStatus });
+    }
+  };
+
+  const handleCancelReceiving = () => {
+    setPoReceivingMode(false);
+    setPoReceivingQuantities({});
+  };
+
+  const handleConfirmCloseOutstanding = () => {
+    setShowCloseOutstandingConfirm(false);
+    setMainData({ ...mainData, status: 'closed' });
+  };
+
   // When classification selection changes, update title/desc (inventory only)
   const handleClassificationChange = (classId: number) => {
     setSelectedClassId(classId);
@@ -747,34 +791,87 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
         if (!result.success) throw new Error(result.message || 'Failed to update purchase request');
       } else if (entityType === 'purchase_order') {
-        // Validate all items have a name selected before sending
-        if (poItems.some(item => !item.item_name || !item.item_name.trim())) {
-          throw new Error('All items must have an item name selected.');
+        if (poReceivingMode) {
+          const itemsPayload = poItems.map(item => ({
+            poi_id: item.poi_id,
+            item_id: item.item_id || null,
+            item_name: item.item_name,
+            item_description: item.item_description || item.item_name,
+            uom: item.uom || null,
+            poi_quantity: parseFloat(item.poi_quantity),
+            unit_price: parseFloat(item.unit_price) || 0,
+            discount: parseFloat(item.discount) || 0,
+            received_quantity: parseFloat(poReceivingQuantities[item.poi_id] ?? String(item.poi_quantity)) || 0,
+          }));
+
+          const result = await apiUpdatePurchaseOrder({ po_id: data.po_id, status: 'received', items: itemsPayload });
+          if (!result.success) throw new Error(result.message || 'Failed to update purchase order');
+
+          const hasOutstanding = itemsPayload.some(i => i.received_quantity < i.poi_quantity);
+          setPoReceivingMode(false);
+          setPoReceivingQuantities({});
+          onUpdate();
+          if (!hasOutstanding) onClose();
+          return;
+
+        } else if (poUpdateAgainMode) {
+          const itemsPayload = poItems.map(item => {
+            const lastReceived = parseFloat(item.received_quantity ?? 0);
+            const currentInput = parseFloat(poUpdateAgainQuantities[item.poi_id] || '0') || 0;
+            const outstanding = parseFloat(item.poi_quantity) - lastReceived;
+            const newReceived = outstanding > 0 && currentInput > 0 ? lastReceived + currentInput : lastReceived;
+            return {
+              poi_id: item.poi_id,
+              item_id: item.item_id || null,
+              item_name: item.item_name,
+              item_description: item.item_description || item.item_name,
+              uom: item.uom || null,
+              poi_quantity: parseFloat(item.poi_quantity),
+              unit_price: parseFloat(item.unit_price) || 0,
+              discount: parseFloat(item.discount) || 0,
+              received_quantity: newReceived,
+            };
+          });
+
+          const result = await apiUpdatePurchaseOrder({ po_id: data.po_id, status: 'received', items: itemsPayload });
+          if (!result.success) throw new Error(result.message || 'Failed to update purchase order');
+
+          const stillOutstanding = itemsPayload.some(i => i.received_quantity < i.poi_quantity);
+          setPoUpdateAgainMode(false);
+          setPoUpdateAgainQuantities({});
+          onUpdate();
+          if (!stillOutstanding) onClose();
+          return;
+
+        } else {
+          if (poItems.some(item => !item.item_name || !item.item_name.trim())) {
+            throw new Error('All items must have an item name selected.');
+          }
+
+          const itemsPayload = poItems.map(item => ({
+            poi_id: item.poi_id,
+            item_id: item.item_id || null,
+            item_name: item.item_name,
+            item_description: item.item_description || item.item_name,
+            uom: item.uom || null,
+            poi_quantity: parseFloat(item.poi_quantity),
+            unit_price: parseFloat(item.unit_price) || 0,
+            discount: parseFloat(item.discount) || 0,
+          }));
+
+          const result = await apiUpdatePurchaseOrder({
+            po_id: data.po_id,
+            reference_no: mainData.reference_no,
+            terms: mainData.terms,
+            delivery_date: mainData.delivery_date || null,
+            remarks: mainData.remarks,
+            status: mainData.status,
+            supplier_id: poSupplierId !== undefined ? poSupplierId : undefined,
+            items: itemsPayload,
+          });
+
+          if (!result.success) throw new Error(result.message || 'Failed to update purchase order');
         }
-
-        const itemsPayload = poItems.map(item => ({
-          poi_id: item.poi_id,
-          item_id: item.item_id || null,
-          item_name: item.item_name,
-          item_description: item.item_description || item.item_name,
-          uom: item.uom || null,
-          poi_quantity: parseFloat(item.poi_quantity),
-          unit_price: parseFloat(item.unit_price) || 0,
-          discount: parseFloat(item.discount) || 0,
-        }));
-
-        const result = await apiUpdatePurchaseOrder({
-          po_id: data.po_id,
-          reference_no: mainData.reference_no,
-          terms: mainData.terms,
-          delivery_date: mainData.delivery_date || null,
-          remarks: mainData.remarks,
-          status: mainData.status,
-          supplier_id: poSupplierId !== undefined ? poSupplierId : undefined,
-          items: itemsPayload,
-        });
-
-        if (!result.success) throw new Error(result.message || 'Failed to update purchase order');
       }
 
       // Refresh parent list
@@ -898,6 +995,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
         </div>
 
         {/* Tabs Section (fixed, doesn't scroll) – all entity types now have tabs */}
+        {(!isPurchaseOrder || (!poReceivingMode && !poUpdateAgainMode)) && (
         <div className="flex-shrink-0 bg-white border-b border-gray-200 px-4 py-2">
           <nav className="-mb-px flex flex-wrap gap-2">
             {/* Main tab: present for every entity type */}
@@ -1037,6 +1135,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
             )}
           </nav>
         </div>
+        )}
 
         {/* Scrollable content area */}
         <div className="flex-1 overflow-y-auto p-4">
@@ -1061,18 +1160,111 @@ const EditPanel: React.FC<EditPanelProps> = ({
           )}
 
           {/* PO status notice */}
-          {isPurchaseOrder && !isPOFieldsEditable && isPOStatusEditable && (
+          {isPurchaseOrder && !isPOFieldsEditable && isPOStatusEditable && !poReceivingMode && !poUpdateAgainMode && (
             <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
               This purchase order is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
             </div>
           )}
-          {isPurchaseOrder && !isPOStatusEditable && (
+          {isPurchaseOrder && !isPOStatusEditable && !poReceivingMode && !poUpdateAgainMode && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
               This purchase order is <strong>Closed</strong> and cannot be edited.
             </div>
           )}
 
+          {/* PO over-received warnings */}
+          {isPurchaseOrder && !poReceivingMode && !poUpdateAgainMode &&
+            poItems
+              .filter(item => parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0) < 0)
+              .map(item => {
+                const diff = parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0);
+                return (
+                  <div key={item.poi_id} className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                    Item <strong>"{item.item_name}"</strong> has received quantity more than expected quantity, <strong>{Math.abs(diff)}</strong>
+                  </div>
+                );
+              })
+          }
+
+          {/* PO Receiving Mode */}
+          {isPurchaseOrder && poReceivingMode && (
+            <div className="space-y-4">
+              <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 rounded-md text-sm">
+                <strong>Receiving Goods</strong> — Enter the quantity received for each item.
+              </div>
+              {poItems.map((item, index) => (
+                <div key={item.poi_id ?? index} className="border border-gray-200 rounded-md p-3 space-y-3 bg-gray-50">
+                  <div className="font-medium text-sm text-gray-800">{item.item_name}</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Expected Quantity Receiving</label>
+                      <input type="number" value={item.poi_quantity} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Quantity Received</label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={poReceivingQuantities[item.poi_id] ?? String(item.poi_quantity)}
+                        onChange={(e) => setPoReceivingQuantities(prev => ({ ...prev, [item.poi_id]: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* PO Update Again Mode */}
+          {isPurchaseOrder && poUpdateAgainMode && (
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                <strong>Update Received Quantity</strong> — Enter additional quantity received for outstanding items.
+              </div>
+              {poOutstandingItems().map((item) => {
+                const lastReceived = parseFloat(item.received_quantity ?? 0);
+                const expected = parseFloat(item.poi_quantity);
+                const outstanding = expected - lastReceived;
+                return (
+                  <div key={item.poi_id} className="border border-amber-200 rounded-md p-3 space-y-3 bg-amber-50">
+                    <div className="font-medium text-sm text-gray-800">{item.item_name}</div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Expected Quantity</label>
+                        <input type="number" value={expected} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Last Received Quantity</label>
+                        <input type="number" value={lastReceived} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Current Received Quantity
+                          <span className="block text-xs text-amber-600 font-normal">(Expecting {outstanding} more to meet Expected)</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={poUpdateAgainQuantities[item.poi_id] ?? ''}
+                          onChange={(e) => setPoUpdateAgainQuantities(prev => ({ ...prev, [item.poi_id]: e.target.value }))}
+                          placeholder={String(outstanding)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Form content - single column layout */}
+          {(!isPurchaseOrder || (!poReceivingMode && !poUpdateAgainMode)) && (
           <div className="space-y-4">
           {/* MAIN TAB (common for all entity types) */}
             {activeTab === 'main' && (
@@ -1256,8 +1448,8 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         disabled={loading || !isStatusEditable}
                       >
-                        <option value="draft">Draft</option>
-                        <option value="sent">Sent</option>
+                        {data?.status !== 'received' && <option value="draft">Draft</option>}
+                        {data?.status !== 'received' && <option value="sent">Sent</option>}
                         <option value="received">Received</option>
                         <option value="closed">Closed</option>
                       </select>
@@ -1356,17 +1548,34 @@ const EditPanel: React.FC<EditPanelProps> = ({
                       <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                       <select
                         value={mainData.status || 'draft'}
-                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        onChange={(e) => handlePOStatusChange(e.target.value)}
                         className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPOStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
                         disabled={loading || !isPOStatusEditable}
                       >
-                        <option value="draft">Draft</option>
-                        <option value="sent">Sent</option>
-                        <option value="confirmed">Confirmed</option>
+                        {data?.status !== 'received' && <option value="draft">Draft</option>}
+                        {data?.status !== 'received' && <option value="sent">Sent</option>}
+                        {data?.status !== 'received' && <option value="confirmed">Confirmed</option>}
                         <option value="received">Received</option>
                         <option value="closed">Closed</option>
                       </select>
                     </div>
+                    {/* Update Again button – shows when PO is received and has outstanding items */}
+                    {data?.status === 'received' && poHasOutstanding() && (
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const initialQtys: Record<number, string> = {};
+                            poOutstandingItems().forEach(item => { initialQtys[item.poi_id] = ''; });
+                            setPoUpdateAgainQuantities(initialQtys);
+                            setPoUpdateAgainMode(true);
+                          }}
+                          className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm font-medium transition-colors"
+                        >
+                          Update Again
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
                 {isCustomerSupplier && (
@@ -2319,6 +2528,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Footer with action buttons (fixed at bottom) */}
@@ -2338,7 +2548,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
           )}
           <div className="flex space-x-3">
           <button
-            onClick={onClose}
+            onClick={poReceivingMode ? handleCancelReceiving : poUpdateAgainMode ? () => setPoUpdateAgainMode(false) : onClose}
             className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
             disabled={loading}
           >
@@ -2451,6 +2661,16 @@ const EditPanel: React.FC<EditPanelProps> = ({
         message="Are you sure you want to delete this item? This action cannot be undone."
         onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+
+      {/* PO close-with-outstanding confirmation */}
+      <ConfirmationDialog
+        isOpen={showCloseOutstandingConfirm}
+        message="Are you sure changing Status to closed? There are still items quantity outstanding and you will no longer able to modify."
+        confirmLabel="Yes, Close"
+        cancelLabel="Cancel"
+        onConfirm={handleConfirmCloseOutstanding}
+        onCancel={() => setShowCloseOutstandingConfirm(false)}
       />
     </>
   );
