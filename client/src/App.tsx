@@ -13,6 +13,11 @@ import CustomerPage from './pages/CustomerPage';
 import PurchasePage from './pages/PurchasePage';
 import PurchaseRequestPage from './pages/PurchaseRequestPage';
 import PurchaseOrderPage from './pages/PurchaseOrderPage';
+import SalesPage from './pages/SalesPage';
+import QuotationPage from './pages/QuotationPage';
+import ProformaInvoicePage from './pages/ProformaInvoicePage';
+import DeliveryOrderPage from './pages/DeliveryOrderPage';
+import SalesInvoicePage from './pages/SalesInvoicePage';
 
 // ==============================================
 // ICON COMPONENT IMPORTS
@@ -95,6 +100,13 @@ function App() {
       icon: PackageIcon
     },
 
+    // Sales - Manage quotations, proforma invoices, delivery orders, and invoices
+    {
+      name: 'Sales',
+      href: '/sales',
+      icon: ChartBarIcon
+    },
+
     // Analytics - Reports and charts (placeholder - not yet implemented)
     {
       name: 'Analytics',
@@ -159,6 +171,13 @@ function App() {
                 <Route path="/purchase" element={<PurchasePage />} />
                 <Route path="/purchase/purchase_request" element={<PurchaseRequestPage />} />
                 <Route path="/purchase/purchase_order" element={<PurchaseOrderPage />} />
+
+                {/* Sales Management Pages */}
+                <Route path="/sales" element={<SalesPage />} />
+                <Route path="/sales/quotation" element={<QuotationPage />} />
+                <Route path="/sales/proforma_invoice" element={<ProformaInvoicePage />} />
+                <Route path="/sales/delivery_order" element={<DeliveryOrderPage />} />
+                <Route path="/sales/invoice" element={<SalesInvoicePage />} />
 
                 {/* Placeholder pages for future features */}
                 <Route path="/analytics" element={<Placeholder title="Analytics & Reports" />} />
