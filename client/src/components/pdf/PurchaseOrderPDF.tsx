@@ -5,7 +5,7 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 // TYPES
 // ==============================================
 
-export interface PRPDFCompany {
+export interface POPDFCompany {
   company_name?: string;
   register_no?: string;
   address?: string;
@@ -18,7 +18,7 @@ export interface PRPDFCompany {
   website?: string;
 }
 
-export interface PRPDFSupplier {
+export interface POPDFSupplier {
   company_name?: string;
   register_no_new?: string;
   phone?: string;
@@ -26,21 +26,26 @@ export interface PRPDFSupplier {
   address?: string;
 }
 
-export interface PRPDFItem {
+export interface POPDFItem {
   item_name: string;
   item_description?: string;
   uom?: string;
-  pri_quantity: number | string;
+  poi_quantity: number | string;
+  unit_price: number | string;
+  line_total: number | string;
 }
 
-export interface PurchaseRequestPDFProps {
-  prNo: string;
+export interface PurchaseOrderPDFProps {
+  poNo: string;
   referenceNo: string;
+  prNo: string;           // empty string if no linked PR — do NOT show '—'
   terms: string;
   remarks: string;
-  company: PRPDFCompany | null;
-  supplier: PRPDFSupplier | null;
-  items: PRPDFItem[];
+  deliveryDate: string;   // ISO date string or empty string
+  totalAmount: number | string;
+  company: POPDFCompany | null;
+  supplier: POPDFSupplier | null;
+  items: POPDFItem[];
   printedBy: string;
   printedAt: Date;
 }
@@ -57,6 +62,23 @@ const fmtQty = (v: number | string): string => {
   return n % 1 === 0 ? String(n) : n.toFixed(2);
 };
 
+const fmtAmount = (v: number | string): string => {
+  const n = typeof v === 'string' ? parseFloat(v) : v;
+  if (isNaN(n)) return '—';
+  return n.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+const fmtDate = (v: string): string => {
+  if (!v) return '';
+  try {
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return '';
+  }
+};
+
 const fmtDateTime = (d: Date): string =>
   d.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
 
@@ -66,8 +88,8 @@ const fmtDateTime = (d: Date): string =>
 //
 // Fixed footer layout (from bottom of page):
 //   bottom 24  – page number bar        (~12 pt tall)
-//   bottom 40  – signature block        (~72 pt tall)
-//   paddingBottom 124 – keeps flowing content above all fixed elements
+//   bottom 44  – signature footer       (~2 layers: Total Payable row + Prepared By / Received By)
+//   paddingBottom 168 – keeps flowing content above all fixed elements
 //
 const s = StyleSheet.create({
 
@@ -76,7 +98,7 @@ const s = StyleSheet.create({
     fontSize: 9,
     color: '#000000',
     paddingTop: 36,
-    paddingBottom: 124,   // reserves space for fixed signature + page-number footers
+    paddingBottom: 168,   // reserves space for fixed signature + total payable + page-number footers
     paddingHorizontal: 40,
   },
 
@@ -84,11 +106,11 @@ const s = StyleSheet.create({
   // SECTION 1 — Company header (centered block, left-aligned text)
   // ═══════════════════════════════════════════════════
   companyHeaderWrapper: {
-    alignItems: 'center',       // centres the inner block horizontally
+    alignItems: 'center',
     marginBottom: 10,
   },
   companyHeaderBlock: {
-    width: '72%',               // centred block; text inside starts from its left edge
+    width: '72%',
   },
   companyName: {
     fontSize: 14,
@@ -117,7 +139,7 @@ const s = StyleSheet.create({
   },
 
   // ═══════════════════════════════════════════════════
-  // SECTION 2 — Document title + Supplier / PR details
+  // SECTION 2 — Document title + Supplier / PO details
   // ═══════════════════════════════════════════════════
   docTitle: {
     fontSize: 18,
@@ -127,20 +149,18 @@ const s = StyleSheet.create({
     marginBottom: 10,
   },
 
-  // Two-column row below the document title
   twoColRow: {
     flexDirection: 'row',
     marginBottom: 10,
   },
-  colLeft: {          // Supplier – 60 %
+  colLeft: {
     flex: 6,
     paddingRight: 14,
   },
-  colRight: {         // PR reference box – 40 %
+  colRight: {
     flex: 4,
   },
 
-  // Supplier block (left column)
   sectionLabel: {
     fontSize: 7.5,
     fontFamily: 'Helvetica-Bold',
@@ -202,7 +222,7 @@ const s = StyleSheet.create({
   },
 
   // ═══════════════════════════════════════════════════
-  // SECTION 3 — Items table (no divider before it)
+  // SECTION 3 — Items table
   // ═══════════════════════════════════════════════════
   tableHeader: {
     flexDirection: 'row',
@@ -239,25 +259,53 @@ const s = StyleSheet.create({
   },
 
   // Column widths
-  colNo:  { width: 24 },
-  colDesc: { flex: 1, paddingRight: 4 },
-  colUom: { width: 54 },
-  colQty: { width: 58 },
+  colNo:        { width: 24 },
+  colDesc:      { flex: 1, paddingRight: 4 },
+  colUom:       { width: 44 },
+  colQty:       { width: 40 },
+  colUnitPrice: { width: 60 },
+  colLineTotal: { width: 66 },
 
   // ═══════════════════════════════════════════════════
-  // FIXED FOOTER — Signatures (appears on every page)
+  // FIXED FOOTER — Layer 1: Total Payable + Layer 2: Signatures
   // ═══════════════════════════════════════════════════
   signatureFooter: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 44,
     left: 40,
     right: 40,
   },
+
+  // Layer 1 — Total Payable (right-aligned, above signature row)
+  totalPayableRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 6,
+  },
+  totalPayableBlock: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  totalPayableLabel: {
+    fontSize: 8,
+    fontFamily: 'Helvetica-Bold',
+    color: '#000000',
+  },
+  totalPayableValue: {
+    fontSize: 11,
+    fontFamily: 'Helvetica-Bold',
+    color: '#000000',
+  },
+
+  // Divider between Layer 1 and Layer 2
   signatureTopBorder: {
     borderTopWidth: 0.75,
     borderTopColor: '#000000',
     marginBottom: 8,
   },
+
+  // Layer 2 — Prepared By / Received By side by side
   signatureRow: {
     flexDirection: 'row',
   },
@@ -287,7 +335,7 @@ const s = StyleSheet.create({
   },
 
   // ═══════════════════════════════════════════════════
-  // FIXED FOOTER — Page number bar (bottom of every page)
+  // FIXED FOOTER — Page number bar
   // ═══════════════════════════════════════════════════
   pageFooter: {
     position: 'absolute',
@@ -310,18 +358,20 @@ const s = StyleSheet.create({
 // COMPONENT
 // ==============================================
 
-const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
-  prNo,
+const PurchaseOrderPDF: React.FC<PurchaseOrderPDFProps> = ({
+  poNo,
   referenceNo,
+  prNo,
   terms,
   remarks,
+  deliveryDate,
+  totalAmount,
   company,
   supplier,
   items,
   printedBy,
   printedAt,
 }) => {
-  // Build address line for own company
   const companyAddrParts = [
     company?.address,
     company?.city,
@@ -331,15 +381,14 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
   ].filter(Boolean);
 
   return (
-    <Document title={`Purchase Request ${prNo}`} author={printedBy}>
+    <Document title={`Purchase Order ${poNo}`} author={printedBy}>
       <Page size="A4" style={s.page}>
 
         {/* ════════════════════════════════════════════════════
-            FIXED FOOTER — Page number (rendered first so it
-            sits behind content on every page)
+            FIXED FOOTER — Page number
         ════════════════════════════════════════════════════ */}
         <View style={s.pageFooter} fixed>
-          <Text style={s.pageFooterText}>{prNo}</Text>
+          <Text style={s.pageFooterText}>{poNo}</Text>
           <Text
             style={s.pageFooterText}
             render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
@@ -347,10 +396,21 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
         </View>
 
         {/* ════════════════════════════════════════════════════
-            FIXED FOOTER — Signatures (above page-number bar)
+            FIXED FOOTER — Layer 1: Total Payable + Layer 2: Signatures
         ════════════════════════════════════════════════════ */}
         <View style={s.signatureFooter} fixed>
+          {/* Layer 1: Divider line */}
           <View style={s.signatureTopBorder} />
+
+          {/* Total Payable — right-aligned, below divider line */}
+          <View style={s.totalPayableRow}>
+            <View style={s.totalPayableBlock}>
+              <Text style={s.totalPayableLabel}>TOTAL PAYABLE:</Text>
+              <Text style={s.totalPayableValue}>{fmtAmount(totalAmount)}</Text>
+            </View>
+          </View>
+
+          {/* Layer 2: Prepared By | Received By — side by side */}
           <View style={s.signatureRow}>
             <View style={s.signatureBlock}>
               <Text style={s.signatureTitle}>Prepared By</Text>
@@ -371,8 +431,6 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
 
         {/* ════════════════════════════════════════════════════
             SECTION 1 — Own Company Details
-            Centred block on the page; text starts from the
-            left edge of the block (not centre-aligned text).
         ════════════════════════════════════════════════════ */}
         <View style={s.companyHeaderWrapper}>
           <View style={s.companyHeaderBlock}>
@@ -380,21 +438,18 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
               {company?.company_name || 'Your Company Name'}
             </Text>
 
-            {/* Reg No */}
             {company?.register_no ? (
               <View style={s.companyInfoRow}>
                 <Text style={s.companyInfoText}>Reg No: {company.register_no}</Text>
               </View>
             ) : null}
 
-            {/* Address (city / state / post_code / country) */}
             {companyAddrParts.length > 0 ? (
               <View style={s.companyInfoRow}>
                 <Text style={s.companyInfoText}>{companyAddrParts.join(', ')}</Text>
               </View>
             ) : null}
 
-            {/* Phone + Email on the same row */}
             {(company?.phone || company?.email) ? (
               <View style={s.companyInfoRow}>
                 {company?.phone ? (
@@ -406,7 +461,6 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
               </View>
             ) : null}
 
-            {/* Website */}
             {company?.website ? (
               <View style={s.companyInfoRow}>
                 <Text style={s.companyInfoText}>{company.website}</Text>
@@ -419,13 +473,11 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
         <View style={s.sectionDivider} />
 
         {/* ════════════════════════════════════════════════════
-            SECTION 2 — Document Title + Supplier / PR Details
+            SECTION 2 — Document Title + Supplier / PO Details
         ════════════════════════════════════════════════════ */}
 
-        {/* Centred document title */}
-        <Text style={s.docTitle}>PURCHASE REQUEST</Text>
+        <Text style={s.docTitle}>PURCHASE ORDER</Text>
 
-        {/* Two-column row: Supplier (60%) | PR Reference (40%) */}
         <View style={s.twoColRow}>
 
           {/* ── Left 60%: Supplier ── */}
@@ -457,16 +509,24 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
             ) : null}
           </View>
 
-          {/* ── Right 40%: PR Reference box ── */}
+          {/* ── Right 40%: PO Reference box ── */}
           <View style={s.colRight}>
             <View style={s.refBox}>
               <View style={s.refRow}>
-                <Text style={s.refLabel}>PR No.</Text>
-                <Text style={s.refValue}>{fmt(prNo)}</Text>
+                <Text style={s.refLabel}>PO No.</Text>
+                <Text style={s.refValue}>{fmt(poNo)}</Text>
               </View>
               <View style={s.refRow}>
                 <Text style={s.refLabel}>Ref No.</Text>
                 <Text style={s.refValue}>{fmt(referenceNo)}</Text>
+              </View>
+              <View style={s.refRow}>
+                <Text style={s.refLabel}>PR Ref.</Text>
+                <Text style={s.refValue}>{prNo}</Text>
+              </View>
+              <View style={s.refRow}>
+                <Text style={s.refLabel}>Delivery</Text>
+                <Text style={s.refValue}>{fmtDate(deliveryDate)}</Text>
               </View>
               <View style={s.refRow}>
                 <Text style={s.refLabel}>Terms</Text>
@@ -500,10 +560,9 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
         </View>
 
         {/* ════════════════════════════════════════════════════
-            SECTION 3 — Items Table (no divider before it)
+            SECTION 3 — Items Table
         ════════════════════════════════════════════════════ */}
 
-        {/* Table header */}
         <View style={s.tableHeader}>
           <View style={s.colNo}>
             <Text style={s.tableHeaderText}>No.</Text>
@@ -517,9 +576,14 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
           <View style={s.colQty}>
             <Text style={[s.tableHeaderText, { textAlign: 'right' }]}>Qty</Text>
           </View>
+          <View style={s.colUnitPrice}>
+            <Text style={[s.tableHeaderText, { textAlign: 'right' }]}>Price/Unit</Text>
+          </View>
+          <View style={s.colLineTotal}>
+            <Text style={[s.tableHeaderText, { textAlign: 'right' }]}>Total Price</Text>
+          </View>
         </View>
 
-        {/* Table rows */}
         {items.length === 0 ? (
           <View style={s.tableRow}>
             <View style={s.colNo} />
@@ -528,6 +592,8 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
             </View>
             <View style={s.colUom} />
             <View style={s.colQty} />
+            <View style={s.colUnitPrice} />
+            <View style={s.colLineTotal} />
           </View>
         ) : (
           items.map((item, index) => (
@@ -550,7 +616,17 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
               </View>
               <View style={s.colQty}>
                 <Text style={[s.tableCell, { textAlign: 'right' }]}>
-                  {fmtQty(item.pri_quantity)}
+                  {fmtQty(item.poi_quantity)}
+                </Text>
+              </View>
+              <View style={s.colUnitPrice}>
+                <Text style={[s.tableCell, { textAlign: 'right' }]}>
+                  {fmtAmount(item.unit_price)}
+                </Text>
+              </View>
+              <View style={s.colLineTotal}>
+                <Text style={[s.tableCell, { textAlign: 'right' }]}>
+                  {fmtAmount(item.line_total)}
                 </Text>
               </View>
             </View>
@@ -563,4 +639,4 @@ const PurchaseRequestPDF: React.FC<PurchaseRequestPDFProps> = ({
   );
 };
 
-export default PurchaseRequestPDF;
+export default PurchaseOrderPDF;

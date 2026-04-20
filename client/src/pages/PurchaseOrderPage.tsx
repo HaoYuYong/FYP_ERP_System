@@ -456,9 +456,9 @@ const PurchaseOrderPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={handleOpenGenerateModal}
-            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors flex items-center"
+            className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 transition-colors flex items-center"
           >
-            <svg className="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
               />
@@ -837,8 +837,8 @@ const PurchaseOrderPage: React.FC = () => {
                     <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
                       {item.uom && <span>UOM: <strong>{item.uom}</strong></span>}
                       <span>Qty: <strong>{item.poi_quantity}</strong></span>
-                      <span>Unit Price: <strong>RM {formatCurrency(item.unit_price)}</strong></span>
-                      <span>Line Total: <strong>RM {formatCurrency(item.line_total)}</strong></span>
+                      <span>Unit Price: <strong>{formatCurrency(item.unit_price)}</strong></span>
+                      <span>Line Total: <strong>{formatCurrency(item.line_total)}</strong></span>
                     </div>
                   </div>
                   <button
@@ -870,7 +870,7 @@ const PurchaseOrderPage: React.FC = () => {
             <span className="text-sm font-medium text-gray-700">Total Amount:</span>
             <input
               type="text"
-              value={`RM ${formatCurrency(lineItems.reduce((sum, i) => sum + i.line_total, 0))}`}
+              value={formatCurrency(lineItems.reduce((sum, i) => sum + i.line_total, 0))}
               readOnly
               className="px-3 py-1.5 border border-gray-300 rounded-md bg-gray-100 text-gray-700 cursor-not-allowed text-sm font-semibold w-36 text-right"
             />
