@@ -11,6 +11,7 @@ import {
   apiGetPICustomersWithDetails,
   apiGetPIInventoryItems,
 } from '../lib/proformaInvoiceApi';
+import { apiGetQuotations } from '../lib/quotationApi';
 
 // ==============================================
 // TYPE DEFINITIONS
@@ -27,6 +28,7 @@ interface ProformaInvoice {
   customer_address?: string;
   customer_phone?: string;
   customer_email?: string;
+  quot_id?: string;
   remarks?: string;
   status: string;
   total_amount: number;
@@ -122,6 +124,12 @@ const ProformaInvoicePage: React.FC = () => {
 
   const [submitting, setSubmitting] = useState(false);
   const [itemError, setItemError] = useState('');
+
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [quotList, setQuotList] = useState<any[]>([]);
+  const [selectedQuotId, setSelectedQuotId] = useState<string>('');
+  const [loadingQuots, setLoadingQuots] = useState(false);
+  const [generatingPI, setGeneratingPI] = useState(false);
 
   // ==============================================
   // COMPUTED VALUES
@@ -371,6 +379,58 @@ const ProformaInvoicePage: React.FC = () => {
     fetchProformaInvoices();
   };
 
+  const handleOpenGenerateModal = async () => {
+    setShowGenerateModal(true);
+    setSelectedQuotId('');
+    setLoadingQuots(true);
+    try {
+      const result = await apiGetQuotations();
+      if (result.success) setQuotList(result.data || []);
+    } catch (err) {
+      console.error('Error fetching quotations:', err);
+    } finally {
+      setLoadingQuots(false);
+    }
+  };
+
+  const handleGenerateFromQuot = async () => {
+    if (!selectedQuotId) return;
+    const quot = quotList.find(q => String(q.quot_id) === selectedQuotId);
+    if (!quot) return;
+
+    setGeneratingPI(true);
+    try {
+      const result = await apiCreateProformaInvoice({
+        reference_no: quot.reference_no || undefined,
+        terms: quot.terms || undefined,
+        customer_id: quot.customer_id || undefined,
+        remarks: quot.remarks || undefined,
+        quot_id: quot.quot_id,
+        items: (quot.items || []).map((item: any) => ({
+          item_id: item.item_id || undefined,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || undefined,
+          pi_quantity: parseFloat(item.qi_quantity),
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount) || 0,
+          line_total: parseFloat(item.line_total) || 0,
+        })),
+      });
+
+      if (!result.success) throw new Error(result.message);
+
+      await fetchProformaInvoices();
+      setShowGenerateModal(false);
+      setSelectedQuotId('');
+    } catch (err: any) {
+      setError(err.message);
+      console.error('Error generating PI from quotation:', err);
+    } finally {
+      setGeneratingPI(false);
+    }
+  };
+
   const handleBack = () => {
     navigate('/sales');
   };
@@ -406,34 +466,47 @@ const ProformaInvoicePage: React.FC = () => {
       {/* PAGE HEADER                                    */}
       {/* ============================================== */}
       <PageHeader title="Proforma Invoice Management" onBack={handleBack} onRefresh={fetchProformaInvoices}>
-        <div className="relative" ref={addMenuRef}>
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowAddMenu(prev => !prev)}
-            className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors flex items-center"
+            onClick={handleOpenGenerateModal}
+            className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 transition-colors flex items-center"
           >
             <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
-            Add New
-            <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
+            Generate from Quot
           </button>
 
-          {showAddMenu && (
-            <div className="absolute right-0 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg z-30 overflow-hidden">
-              <button
-                onClick={handleOpenModal}
-                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
-              >
-                <svg className="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Proforma Invoice Form
-              </button>
-            </div>
-          )}
+          <div className="relative" ref={addMenuRef}>
+            <button
+              onClick={() => setShowAddMenu(prev => !prev)}
+              className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors flex items-center"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add New
+              <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showAddMenu && (
+              <div className="absolute right-0 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg z-30 overflow-hidden">
+                <button
+                  onClick={handleOpenModal}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+                >
+                  <svg className="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Proforma Invoice Form
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </PageHeader>
 
@@ -821,6 +894,108 @@ const ProformaInvoicePage: React.FC = () => {
           </div>
         </div>
       </AddNewFormModal>
+
+      {/* ============================================== */}
+      {/* GENERATE FROM QUOTATION MODAL                  */}
+      {/* ============================================== */}
+      {showGenerateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">Generate PI from Quotation</h2>
+              <button
+                onClick={() => { setShowGenerateModal(false); setSelectedQuotId(''); }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {loadingQuots ? (
+                <div className="flex items-center justify-center py-8">
+                  <svg className="animate-spin h-6 w-6 text-primary-600" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="ml-3 text-gray-600">Loading quotations...</span>
+                </div>
+              ) : quotList.length === 0 ? (
+                <p className="text-center text-gray-500 py-8">No quotations found.</p>
+              ) : (
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10"></th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">QUOT Number</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reference No</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PI Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {quotList.map(quot => {
+                      const isGenerated = quot.generated_pi_id !== null && quot.generated_pi_id !== undefined;
+                      return (
+                        <tr
+                          key={quot.quot_id}
+                          onClick={() => { if (!isGenerated) setSelectedQuotId(String(quot.quot_id)); }}
+                          className={`transition-colors ${isGenerated ? 'opacity-50 cursor-not-allowed bg-gray-50' : selectedQuotId === String(quot.quot_id) ? 'bg-primary-50 cursor-pointer' : 'hover:bg-gray-50 cursor-pointer'}`}
+                        >
+                          <td className="px-4 py-3">
+                            <input
+                              type="radio"
+                              checked={selectedQuotId === String(quot.quot_id)}
+                              onChange={() => { if (!isGenerated) setSelectedQuotId(String(quot.quot_id)); }}
+                              disabled={isGenerated}
+                              className="text-primary-600 disabled:cursor-not-allowed"
+                            />
+                          </td>
+                          <td className="px-4 py-3 font-mono text-sm text-gray-900 font-medium">{quot.quot_no}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{quot.reference_no || '—'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{quot.customer_company_name || '—'}</td>
+                          <td className="px-4 py-3 text-sm">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${getStatusBadgeClass(quot.status)}`}>
+                              {quot.status.charAt(0).toUpperCase() + quot.status.slice(1)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {isGenerated ? (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">Generated</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">Available</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 px-6 py-4 border-t">
+              <button
+                onClick={() => { setShowGenerateModal(false); setSelectedQuotId(''); }}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerateFromQuot}
+                disabled={!selectedQuotId || generatingPI}
+                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+              >
+                {generatingPI ? 'Generating...' : 'Generate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ============================================== */}
       {/* SUCCESS CONFIRMATION DIALOG                    */}

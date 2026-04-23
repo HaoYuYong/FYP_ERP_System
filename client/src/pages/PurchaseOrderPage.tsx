@@ -926,6 +926,7 @@ const PurchaseOrderPage: React.FC = () => {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10"></th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PR Number</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reference No</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Supplier</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Generate Status</th>
                     </tr>
@@ -950,6 +951,7 @@ const PurchaseOrderPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 font-mono text-sm text-gray-900 font-medium">{pr.pr_no}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">{pr.reference_no || '—'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{pr.supplier_company_name || '—'}</td>
                           <td className="px-4 py-3 text-sm">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${getStatusBadgeClass(pr.status)}`}>
                               {pr.status.charAt(0).toUpperCase() + pr.status.slice(1)}
