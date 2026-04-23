@@ -33,6 +33,7 @@ interface PurchaseRequest {
   supplier_email?: string;
   remarks?: string;
   status: string;
+  created_at?: string;
   items?: PurchaseRequestItem[];
 }
 
@@ -606,7 +607,7 @@ const PurchaseRequestPage: React.FC = () => {
                         Supplier
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Items
+                        Date
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Status
@@ -660,7 +661,7 @@ const PurchaseRequestPage: React.FC = () => {
                             {pr.supplier_company_name || '—'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            {pr.items?.length || 0} item(s)
+                            {pr.created_at ? new Date(pr.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             {/* Status badge with color coding */}

@@ -16,6 +16,11 @@ import {
 } from '../../lib/purchaseRequestApi';
 import { apiUpdatePurchaseOrder } from '../../lib/purchaseOrderApi';
 import {
+  apiUpdateQuotation,
+  apiGetCustomersWithDetails as apiGetQuotCustomers,
+  apiGetQuotationInventoryItems as apiGetQuotInventoryItems,
+} from '../../lib/quotationApi';
+import {
   apiGetSuppliersWithDetails as apiGetPOSuppliersWithDetails,
   apiGetInventoryItems as apiGetPOInventoryItems,
 } from '../../lib/purchaseOrderApi';
@@ -33,7 +38,7 @@ import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 interface EditPanelProps {
   isOpen: boolean;                    // Whether panel is visible
   onClose: () => void;                // Close panel (without saving)
-  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order'; // Type of entity being edited
+  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation'; // Type of entity being edited
   data: any;                          // Current entity data (from table row)
   onUpdate: () => void;               // Callback after successful update
   onDelete?: () => void;              // Callback after successful delete (optional for PR)
@@ -138,6 +143,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const alertsRef = useRef<HTMLDivElement>(null);
 
+  // ==============================================
+  // QUOTATION EDITING STATE
+  // ==============================================
+
+  const [quotItems, setQuotItems] = useState<any[]>([]);
+  const [quotCustomerId, setQuotCustomerId] = useState<number | null>(null);
+  const [quotCustomerInfo, setQuotCustomerInfo] = useState<any>({});
+  const [allQuotCustomers, setAllQuotCustomers] = useState<any[]>([]);
+  const [allQuotInventoryItems, setAllQuotInventoryItems] = useState<any[]>([]);
+  const [loadingQuotDropdowns, setLoadingQuotDropdowns] = useState(false);
+
+  const [quotRefreshConfirmOpen, setQuotRefreshConfirmOpen] = useState(false);
+  const [quotRefreshPendingIndex, setQuotRefreshPendingIndex] = useState<number | null>(null);
+  const [quotRefreshPendingData, setQuotRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
+  const [quotRefreshDiff, setQuotRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
+  const [quotItemMessages, setQuotItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
+
   // PR PDF preview state
   const [showPRPreview, setShowPRPreview] = useState(false);
   const [prPreviewCompany, setPrPreviewCompany] = useState<any>(null);
@@ -204,6 +226,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
         setPoReceivingQuantities({});
         setPoUpdateAgainMode(false);
         setPoUpdateAgainQuantities({});
+      } else if (entityType === 'quotation') {
+        setQuotItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
+        setQuotCustomerId(data.customer_id || null);
+        setQuotCustomerInfo({
+          company_name:    data.customer_company_name || '',
+          register_no_new: data.customer_register_no  || '',
+          email:           data.customer_email        || '',
+          phone:           data.customer_phone        || '',
+          address:         data.customer_address      || '',
+        });
+        fetchQuotDropdownData();
       }
     }
   }, [isOpen, data, entityType]);
@@ -332,6 +365,22 @@ const EditPanel: React.FC<EditPanelProps> = ({
       console.error('Error fetching PR dropdown data:', err);
     } finally {
       setLoadingPRDropdowns(false);
+    }
+  };
+
+  const fetchQuotDropdownData = async () => {
+    setLoadingQuotDropdowns(true);
+    try {
+      const [customersResult, itemsResult] = await Promise.all([
+        apiGetQuotCustomers(),
+        apiGetQuotInventoryItems(),
+      ]);
+      if (customersResult.success) setAllQuotCustomers(customersResult.data || []);
+      if (itemsResult.success)    setAllQuotInventoryItems(itemsResult.data || []);
+    } catch (err: any) {
+      console.error('Error fetching quotation dropdown data:', err);
+    } finally {
+      setLoadingQuotDropdowns(false);
     }
   };
 
@@ -620,6 +669,149 @@ const EditPanel: React.FC<EditPanelProps> = ({
     setPoRefreshPendingIndex(null);
     setPoRefreshPendingData(null);
     setPoRefreshDiff([]);
+  };
+
+  // ==============================================
+  // QUOTATION ITEM / CUSTOMER HANDLERS
+  // ==============================================
+
+  const handleQuotCustomerChange = (customerId: number | null) => {
+    setQuotCustomerId(customerId);
+    if (customerId) {
+      const cust = allQuotCustomers.find((c: any) => c.customer_id === customerId);
+      if (cust) setQuotCustomerInfo(cust);
+    } else {
+      setQuotCustomerInfo({});
+    }
+  };
+
+  const handleRefreshQuotCustomer = () => {
+    if (!quotCustomerId) return;
+    const cust = allQuotCustomers.find((c: any) => c.customer_id === quotCustomerId);
+    if (cust) setQuotCustomerInfo(cust);
+  };
+
+  const handleQuotItemNameChange = (index: number, newItemId: number | string) => {
+    const invItem = allQuotInventoryItems.find((i: any) => i.item_id === Number(newItemId));
+    if (!invItem) return;
+    setQuotItems(prev =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              item_id: invItem.item_id,
+              item_name: invItem.item_name,
+              item_description: invItem.description || '',
+              uom: invItem.uom || '',
+            }
+          : item
+      )
+    );
+  };
+
+  const handleQuotItemFieldChange = (index: number, field: string, value: string) => {
+    setQuotItems(prev =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const updated = { ...item, [field]: value };
+        if (field === 'qi_quantity' || field === 'unit_price') {
+          const qty   = parseFloat(field === 'qi_quantity' ? value : item.qi_quantity) || 0;
+          const price = parseFloat(field === 'unit_price'  ? value : item.unit_price)  || 0;
+          updated.line_total = qty * price;
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleAddQuotItem = () => {
+    setQuotItems(prev => [{
+      _tempId: Date.now(),
+      item_id: null,
+      item_name: '',
+      item_description: '',
+      uom: '',
+      qi_quantity: 1,
+      unit_price: 0,
+      discount: 0,
+      line_total: 0,
+    }, ...prev]);
+  };
+
+  const handleRemoveQuotItem = (index: number) => {
+    setQuotItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const quotItemKey = (item: any, index: number): string =>
+    String(item.qi_id ?? item._tempId ?? index);
+
+  const showQuotItemMessage = (key: string, type: 'info' | 'success', text: string) => {
+    setQuotItemMessages(prev => ({ ...prev, [key]: { type, text } }));
+    setTimeout(() => {
+      setQuotItemMessages(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 3000);
+  };
+
+  const handleRefreshQuotItem = (index: number) => {
+    const item = quotItems[index];
+    if (!item?.item_id) return;
+    const invItem = allQuotInventoryItems.find((i: any) => i.item_id === item.item_id);
+    if (!invItem) return;
+
+    const key = quotItemKey(item, index);
+
+    const candidateName = invItem.item_name || '';
+    const candidateDesc = invItem.description || '';
+    const candidateUom  = invItem.uom || '';
+
+    const currentName = item.item_name || '';
+    const currentDesc = item.item_description || '';
+    const currentUom  = item.uom || '';
+
+    const diff: { label: string; before: string; after: string }[] = [];
+    if (currentName !== candidateName) diff.push({ label: 'Item Name',        before: currentName, after: candidateName });
+    if (currentDesc !== candidateDesc) diff.push({ label: 'Item Description', before: currentDesc, after: candidateDesc });
+    if (currentUom  !== candidateUom)  diff.push({ label: 'UOM',              before: currentUom,  after: candidateUom });
+
+    if (diff.length === 0) {
+      showQuotItemMessage(key, 'info', 'Item is already up to date.');
+      return;
+    }
+
+    setQuotRefreshPendingIndex(index);
+    setQuotRefreshPendingData({ item_name: candidateName, item_description: candidateDesc, uom: candidateUom });
+    setQuotRefreshDiff(diff);
+    setQuotRefreshConfirmOpen(true);
+  };
+
+  const handleRefreshQuotItemConfirm = () => {
+    if (quotRefreshPendingIndex === null || !quotRefreshPendingData) return;
+    const index = quotRefreshPendingIndex;
+    const item = quotItems[index];
+    const key = quotItemKey(item, index);
+
+    setQuotItems(prev =>
+      prev.map((it, i) =>
+        i === index ? { ...it, ...quotRefreshPendingData } : it
+      )
+    );
+
+    setQuotRefreshConfirmOpen(false);
+    setQuotRefreshPendingIndex(null);
+    setQuotRefreshPendingData(null);
+    setQuotRefreshDiff([]);
+    showQuotItemMessage(key, 'success', 'Item refreshed successfully.');
+  };
+
+  const handleRefreshQuotItemCancel = () => {
+    setQuotRefreshConfirmOpen(false);
+    setQuotRefreshPendingIndex(null);
+    setQuotRefreshPendingData(null);
+    setQuotRefreshDiff([]);
   };
 
   // ==============================================
@@ -915,6 +1107,37 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
           if (!result.success) throw new Error(result.message || 'Failed to update purchase order');
         }
+      } else if (entityType === 'quotation') {
+        if (quotItems.some(item => !item.item_name || !item.item_name.trim())) {
+          throw new Error('All items must have an item name selected.');
+        }
+
+        const itemsPayload = quotItems.map(item => ({
+          qi_id: item.qi_id,
+          item_id: item.item_id || null,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || null,
+          qi_quantity: parseFloat(item.qi_quantity),
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: 0,
+          line_total: parseFloat(item.line_total) || 0,
+        }));
+
+        const quotTotalAmount = itemsPayload.reduce((sum, item) => sum + item.line_total, 0);
+
+        const result = await apiUpdateQuotation({
+          quot_id: data.quot_id,
+          reference_no: mainData.reference_no,
+          terms: mainData.terms,
+          remarks: mainData.remarks,
+          status: mainData.status,
+          customer_id: quotCustomerId !== undefined ? quotCustomerId : undefined,
+          total_amount: quotTotalAmount,
+          items: itemsPayload,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update quotation');
       }
 
       // Refresh parent list
@@ -1045,6 +1268,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const isClassification = entityType === 'classification';
   const isPurchaseRequest = entityType === 'purchase_request';
   const isPurchaseOrder = entityType === 'purchase_order';
+  const isQuotation = entityType === 'quotation';
   // All fields (except Status) editable only in Draft
   const isPRFieldsEditable = isPurchaseRequest && data?.status === 'draft';
   // Status dropdown editable in Draft/Sent/Received; locked in Closed
@@ -1052,6 +1276,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // PO gate rules (same pattern as PR; PO has 5 statuses: draft/sent/confirmed/received/closed)
   const isPOFieldsEditable = isPurchaseOrder && data?.status === 'draft';
   const isPOStatusEditable = isPurchaseOrder && data?.status !== 'closed';
+  // Quotation gate rules (draft/sent/accepted/rejected/closed)
+  const isQuotFieldsEditable = isQuotation && data?.status === 'draft';
+  const isQuotStatusEditable = isQuotation && data?.status !== 'closed';
 
   const hasAlerts =
     !!error ||
@@ -1062,7 +1289,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
     (isPurchaseOrder && data?.status === 'draft' && !!data?.pr_id && poHasEmptyUnitPrice()) ||
     (isPurchaseOrder && !poReceivingMode && !poUpdateAgainMode && poItems.some(
       item => parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0) < 0
-    ));
+    )) ||
+    (isQuotation && !isQuotFieldsEditable && isQuotStatusEditable) ||
+    (isQuotation && !isQuotStatusEditable);
 
   return (
     <>
@@ -1087,15 +1316,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
               ? 'Edit Purchase Request Details'
               : isPurchaseOrder
                 ? 'Edit Purchase Order Details'
-                : `Edit ${
-                    entityType === 'inventory'
-                      ? 'Item Details'
-                      : entityType === 'customer'
-                        ? 'Customer Details'
-                        : entityType === 'supplier'
-                          ? 'Supplier Details'
-                          : 'Classification Details'
-                  }`}
+                : isQuotation
+                  ? 'Edit Quotation Details'
+                  : `Edit ${
+                      entityType === 'inventory'
+                        ? 'Item Details'
+                        : entityType === 'customer'
+                          ? 'Customer Details'
+                          : entityType === 'supplier'
+                            ? 'Supplier Details'
+                            : 'Classification Details'
+                    }`}
           </h2>
           <button
             onClick={onClose}
@@ -1251,6 +1482,32 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 </button>
               </>
             )}
+
+            {/* Quotation-only tabs */}
+            {isQuotation && (
+              <>
+                <button
+                  onClick={() => setActiveTab('items')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'items'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Items
+                </button>
+                <button
+                  onClick={() => setActiveTab('supplier')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'supplier'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Customer
+                </button>
+              </>
+            )}
           </nav>
         </div>
         )}
@@ -1275,6 +1532,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
             {isPurchaseRequest && !isStatusEditable && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
                 This purchase request is <strong>Closed</strong> and cannot be edited.
+              </div>
+            )}
+
+            {/* Quotation status notices */}
+            {isQuotation && !isQuotFieldsEditable && isQuotStatusEditable && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                This quotation is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+              </div>
+            )}
+            {isQuotation && !isQuotStatusEditable && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                This quotation is <strong>Closed</strong> and cannot be edited.
               </div>
             )}
 
@@ -1319,7 +1588,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 <strong>Receiving Goods</strong> — Enter the quantity received for each item.
               </div>
               {poItems.map((item, index) => (
-                <div key={item.poi_id ?? index} className="border border-gray-200 rounded-md p-3 space-y-3 bg-gray-50">
+                <div key={item.poi_id ?? index} className="border-2 border-gray-300 rounded-lg p-3 space-y-3 bg-gray-50 mb-1">
                   <div className="font-medium text-sm text-gray-800">{item.item_name}</div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -1355,7 +1624,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 const expected = parseFloat(item.poi_quantity);
                 const outstanding = expected - lastReceived;
                 return (
-                  <div key={item.poi_id} className="border border-amber-200 rounded-md p-3 space-y-3 bg-amber-50">
+                  <div key={item.poi_id} className="border-2 border-amber-300 rounded-lg p-3 space-y-3 bg-amber-50 mb-1">
                     <div className="font-medium text-sm text-gray-800">{item.item_name}</div>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
@@ -1705,6 +1974,88 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         </button>
                       </div>
                     )}
+                  </>
+                )}
+                {isQuotation && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">QUOT Number</label>
+                      <input
+                        type="text"
+                        value={mainData.quot_no || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Created By</label>
+                      <input
+                        type="text"
+                        value={data?.created_by_name || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                      <input
+                        type="text"
+                        value={data?.created_at ? new Date(data.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
+                      <input
+                        type="text"
+                        value={mainData.reference_no || ''}
+                        onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isQuotFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
+                      <input
+                        type="text"
+                        value={mainData.terms || ''}
+                        onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
+                        placeholder="e.g., Net 30 days"
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isQuotFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                      <textarea
+                        value={mainData.remarks || ''}
+                        onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
+                        rows={3}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isQuotFieldsEditable}
+                      />
+                    </div>
+                    {/* Status – forward-only: Draft→Sent/Closed; Sent→Accepted/Rejected/Closed; Accepted/Rejected→Closed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={mainData.status || 'draft'}
+                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isQuotStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isQuotStatusEditable}
+                      >
+                        <option value={data?.status}>{data?.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Draft'}</option>
+                        {data?.status === 'draft' && <option value="sent">Sent</option>}
+                        {data?.status === 'draft' && <option value="closed">Closed</option>}
+                        {data?.status === 'sent' && <option value="accepted">Accepted</option>}
+                        {data?.status === 'sent' && <option value="rejected">Rejected</option>}
+                        {data?.status === 'sent' && <option value="closed">Closed</option>}
+                        {data?.status === 'accepted' && <option value="rejected">Rejected</option>}
+                        {data?.status === 'rejected' && <option value="accepted">Accepted</option>}
+                        {(data?.status === 'accepted' || data?.status === 'rejected') && <option value="closed">Closed</option>}
+                      </select>
+                    </div>
                   </>
                 )}
                 {isCustomerSupplier && (
@@ -2111,7 +2462,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 ) : (
                   prItems.map((item, index) => (
                     // Card for each line item
-                    <div key={item.pri_id ?? item._tempId ?? index} className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                    <div key={item.pri_id ?? item._tempId ?? index} className="border-2 border-gray-300 rounded-lg p-4 space-y-4 bg-gray-50 mb-1">
                       {/* Card header: line number + action buttons */}
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -2205,7 +2556,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         />
                       </div>
 
-                      {/* UOM – read-only snapshot; auto-filled from selected inventory item */}
+                      {/* UOM – full width */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
                         <input
@@ -2216,7 +2567,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         />
                       </div>
 
-                      {/* Quantity – editable in Draft only */}
+                      {/* Quantity – full width */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
                         <input
@@ -2377,7 +2728,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
                   <p className="text-sm text-gray-500 py-4 text-center">No items in this purchase order.</p>
                 ) : (
                   poItems.map((item, index) => (
-                    <div key={item.poi_id ?? item._tempId ?? index} className="border border-gray-200 rounded-md p-4 space-y-3 bg-gray-50">
+                    <div key={item.poi_id ?? item._tempId ?? index} className="border-2 border-gray-300 rounded-lg p-4 space-y-4 bg-gray-50 mb-1">
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                           Line Item {index + 1}
@@ -2462,55 +2813,55 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         />
                       </div>
 
-                      {/* UOM (read-only) */}
+                      {/* UOM – full width */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
                         <input type="text" value={item.uom || ''} readOnly
                           className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
                       </div>
 
-                      {/* Quantity – editable in Draft */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                        <input
-                          type="number"
-                          step="any"
-                          min="0.01"
-                          value={item.poi_quantity}
-                          onChange={(e) => handlePOItemFieldChange(index, 'poi_quantity', e.target.value)}
-                          disabled={loading || !isPOFieldsEditable}
-                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
-                        />
+                      {/* Quantity | Unit Price – side by side */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={item.poi_quantity}
+                            onChange={(e) => handlePOItemFieldChange(index, 'poi_quantity', e.target.value)}
+                            disabled={loading || !isPOFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={item.unit_price}
+                            onChange={(e) => handlePOItemFieldChange(index, 'unit_price', e.target.value)}
+                            disabled={loading || !isPOFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
                       </div>
 
-                      {/* Unit Price – editable in Draft */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={item.unit_price}
-                          onChange={(e) => handlePOItemFieldChange(index, 'unit_price', e.target.value)}
-                          disabled={loading || !isPOFieldsEditable}
-                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
-                        />
-                      </div>
-
-                      {/* Line Total (read-only, auto-calculated) */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Total</label>
-                        <input type="text"
-                          value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          readOnly
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
-                      </div>
-
-                      {/* Received Quantity (read-only) */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Received Quantity</label>
-                        <input type="text" value={item.received_quantity ?? 0} readOnly
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      {/* Received Quantity | Total – side by side */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Received Quantity</label>
+                          <input type="text" value={item.received_quantity ?? 0} readOnly
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Total</label>
+                          <input type="text"
+                            value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            readOnly
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                        </div>
                       </div>
                     </div>
                   ))
@@ -2602,6 +2953,262 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
+            {/* QUOTATION ITEMS TAB */}
+            {isQuotation && activeTab === 'items' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Items in Quotation ({quotItems.length})
+                  </span>
+                  {isQuotFieldsEditable && (
+                    <button
+                      type="button"
+                      onClick={handleAddQuotItem}
+                      disabled={loading}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Item
+                    </button>
+                  )}
+                </div>
+
+                {loadingQuotDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading items...</div>
+                ) : quotItems.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-4 text-center">No items in this quotation.</p>
+                ) : (
+                  quotItems.map((item, index) => (
+                    <div key={item.qi_id ?? item._tempId ?? index} className="border-2 border-gray-300 rounded-lg p-4 space-y-4 bg-gray-50 mb-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Line Item {index + 1}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshQuotItem(index)}
+                            disabled={loading || !item.item_id || !isQuotFieldsEditable}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            title={!isQuotFieldsEditable ? 'Read-only — only draft quotations can be edited' : 'Refresh description and UOM from inventory'}
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Refresh
+                          </button>
+                          {isQuotFieldsEditable && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveQuotItem(index)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {quotItemMessages[quotItemKey(item, index)] && (
+                        <div className={`text-xs px-3 py-1.5 rounded-md ${
+                          quotItemMessages[quotItemKey(item, index)].type === 'success'
+                            ? 'bg-green-50 border border-green-200 text-green-700'
+                            : 'bg-blue-50 border border-blue-200 text-blue-700'
+                        }`}>
+                          {quotItemMessages[quotItemKey(item, index)].text}
+                        </div>
+                      )}
+
+                      {/* Item selection dropdown */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Selecting</label>
+                        <select
+                          value={item.item_id || ''}
+                          onChange={(e) => handleQuotItemNameChange(index, e.target.value)}
+                          disabled={loading || !isQuotFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        >
+                          {!item.item_id && (
+                            <option value="">{item.item_name || '— Select item —'}</option>
+                          )}
+                          {allQuotInventoryItems.map((inv: any) => (
+                            <option key={inv.item_id} value={inv.item_id}>
+                              {inv.description ? `${inv.item_name}(${inv.description})` : inv.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                        <input type="text" value={item.item_id || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
+                        <textarea
+                          value={[item.item_name, item.item_description].filter(Boolean).join('\n')}
+                          readOnly
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm resize-none"
+                        />
+                      </div>
+
+                      {/* UOM – full width */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                        <input type="text" value={item.uom || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      {/* Quantity | Unit Price – side by side */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={item.qi_quantity}
+                            onChange={(e) => handleQuotItemFieldChange(index, 'qi_quantity', e.target.value)}
+                            disabled={loading || !isQuotFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={item.unit_price}
+                            onChange={(e) => handleQuotItemFieldChange(index, 'unit_price', e.target.value)}
+                            disabled={loading || !isQuotFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Line Total – full width */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Line Total</label>
+                        <input
+                          type="text"
+                          value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {/* Total amount summary at bottom of items tab */}
+                {quotItems.length > 0 && (
+                  <div className="flex justify-end pt-2 border-t border-gray-200">
+                    <div className="bg-gray-50 px-4 py-2 rounded-md border border-gray-200">
+                      <span className="text-sm font-medium text-gray-700 mr-3">Total Amount:</span>
+                      <span className="text-base font-bold text-gray-900">
+                        {quotItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                          .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* QUOTATION CUSTOMER TAB */}
+            {isQuotation && activeTab === 'supplier' && (
+              <div className="space-y-4">
+                {loadingQuotDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading customers...</div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Customer Details</span>
+                      <button
+                        type="button"
+                        onClick={handleRefreshQuotCustomer}
+                        disabled={loading || !quotCustomerId || !isQuotFieldsEditable}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                        title={!isQuotFieldsEditable ? 'Read-only — only draft quotations can be edited' : 'Refresh customer details from customer list'}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                      <select
+                        value={quotCustomerId || ''}
+                        onChange={(e) => handleQuotCustomerChange(e.target.value ? Number(e.target.value) : null)}
+                        disabled={loading || !isQuotFieldsEditable}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isQuotFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— No customer selected —</option>
+                        {allQuotCustomers.map((cust: any) => (
+                          <option key={cust.customer_id} value={cust.customer_id}>
+                            {cust.register_no_new
+                              ? `${cust.company_name}(${cust.register_no_new})`
+                              : cust.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Customer ID</label>
+                      <input type="text" value={quotCustomerId || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                      <input type="text" value={quotCustomerInfo.register_no_new || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input type="text" value={quotCustomerInfo.email || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input type="text" value={quotCustomerInfo.phone || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={[
+                          quotCustomerInfo.address,
+                          quotCustomerInfo.city,
+                          quotCustomerInfo.state,
+                          quotCustomerInfo.country,
+                          quotCustomerInfo.post_code,
+                        ].filter(Boolean).join(', ')}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* LIABILITIES TAB (customer/supplier) */}
             {isCustomerSupplier && activeTab === 'liabilities' && (
               <div className="space-y-4">
@@ -2662,7 +3269,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
 
         {/* Footer with action buttons (fixed at bottom) */}
         <div className="flex-shrink-0 bg-white border-t border-gray-200 p-4 flex justify-between items-center">
-          {/* Total Amount – visible from any tab for PO */}
+          {/* Total Amount – visible from any tab for PO and Quotation */}
           {isPurchaseOrder ? (
             <div className="flex flex-col">
               <span className="text-xs text-gray-500">Total Amount</span>
@@ -2670,6 +3277,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 {mainData.total_amount !== undefined && mainData.total_amount !== null
                   ? Number(mainData.total_amount).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                   : '0.00'}
+              </span>
+            </div>
+          ) : isQuotation ? (
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500">Total Amount</span>
+              <span className="text-base font-semibold text-gray-800">
+                {quotItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                  .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           ) : (
@@ -2745,13 +3360,15 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <button
             onClick={handleUpdate}
             className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center transition-colors"
-            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable)}
+            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable)}
             title={
               (isPurchaseRequest && !isStatusEditable)
                 ? 'This purchase request is closed and cannot be edited'
                 : (isPurchaseOrder && !isPOStatusEditable)
                   ? 'This purchase order is closed and cannot be edited'
-                  : undefined
+                  : (isQuotation && !isQuotStatusEditable)
+                    ? 'This quotation is closed and cannot be edited'
+                    : undefined
             }
           >
             {loading ? (
@@ -2822,6 +3439,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {poRefreshDiff.map((row, i) => (
+                  <tr key={i} className="bg-white">
+                    <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
+                    <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{row.after || <span className="italic text-gray-400">empty</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
+
+      {/* Quotation item refresh confirmation dialog – shows before/after diff */}
+      <ConfirmationDialog
+        isOpen={quotRefreshConfirmOpen}
+        message="The following fields will be overwritten with the latest values from inventory:"
+        confirmLabel="Yes, Refresh"
+        cancelLabel="Cancel"
+        onConfirm={handleRefreshQuotItemConfirm}
+        onCancel={handleRefreshQuotItemCancel}
+        content={
+          <div className="border border-gray-200 rounded-md overflow-hidden text-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Field</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Current Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">New Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {quotRefreshDiff.map((row, i) => (
                   <tr key={i} className="bg-white">
                     <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
                     <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
