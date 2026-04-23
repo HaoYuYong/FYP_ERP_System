@@ -2,9 +2,9 @@ import { pool } from '../config/database';
 import { createLog, getTableId } from '../utils/logger';
 
 /**
- * Create a quotation header with associated line items and logging.
+ * Create a proforma invoice header with associated line items and logging.
  */
-export const createQuotation = async (
+export const createProformaInvoice = async (
   data: {
     reference_no?: string;
     terms?: string;
@@ -15,7 +15,7 @@ export const createQuotation = async (
       item_name: string;
       item_description: string;
       uom?: string;
-      qi_quantity: number;
+      pi_quantity: number;
       unit_price: number;
       discount: number;
       line_total: number;
@@ -28,11 +28,11 @@ export const createQuotation = async (
   try {
     await client.query('BEGIN');
 
-    // Get next QUOT number from sequence.
-    const quotNoResult = await client.query(
-      "SELECT 'QUOT-' || LPAD(nextval('seq_quot_no')::text, 6, '0') AS quot_no"
+    // Get next PI number from sequence.
+    const piNoResult = await client.query(
+      "SELECT 'PI-' || LPAD(nextval('seq_pi_no')::text, 6, '0') AS pi_no"
     );
-    const quotNo = quotNoResult.rows[0].quot_no;
+    const piNo = piNoResult.rows[0].pi_no;
 
     // Snapshot customer details at creation time.
     let snapshotCompanyName = null;
@@ -64,19 +64,19 @@ export const createQuotation = async (
     // Compute total_amount from items.
     const totalAmount = data.items.reduce((sum, item) => sum + (item.line_total || 0), 0);
 
-    // Insert quotation header.
-    const quotQuery = `
-      INSERT INTO quotation (
-        quot_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
+    // Insert proforma invoice header.
+    const piQuery = `
+      INSERT INTO proforma_invoice (
+        pi_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
         customer_company_name, customer_register_no, customer_address, customer_phone, customer_email
       )
       VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12)
-      RETURNING quot_id, quot_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
+      RETURNING pi_id, pi_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
                 customer_company_name, customer_register_no, customer_address, customer_phone, customer_email
     `;
 
-    const quotResult = await client.query(quotQuery, [
-      quotNo,
+    const piResult = await client.query(piQuery, [
+      piNo,
       data.reference_no || null,
       data.terms || null,
       data.customer_id || null,
@@ -90,17 +90,17 @@ export const createQuotation = async (
       snapshotEmail,
     ]);
 
-    const quot = quotResult.rows[0];
+    const pi = piResult.rows[0];
 
-    // Log quotation header creation.
-    const tableId = await getTableId('quotation');
-    const quotLogId = await createLog({
+    // Log proforma invoice header creation.
+    const tableId = await getTableId('proforma_invoice');
+    const piLogId = await createLog({
       tableId,
-      recordId: quot.quot_id,
+      recordId: pi.pi_id,
       actionType: 'INSERT',
       actionBy: userId,
       changedData: {
-        quot_no: quot.quot_no,
+        pi_no: pi.pi_no,
         reference_no: data.reference_no,
         terms: data.terms,
         customer_id: data.customer_id,
@@ -111,48 +111,48 @@ export const createQuotation = async (
     });
 
     await client.query(
-      'UPDATE quotation SET log_id = $1 WHERE quot_id = $2',
-      [quotLogId, quot.quot_id]
+      'UPDATE proforma_invoice SET log_id = $1 WHERE pi_id = $2',
+      [piLogId, pi.pi_id]
     );
 
     // Create line items.
     const items = [];
-    const itemTableId = await getTableId('quotation_item');
+    const itemTableId = await getTableId('proforma_invoice_item');
 
     for (const item of data.items) {
-      const qiQuery = `
-        INSERT INTO quotation_item (quot_id, item_id, item_name, item_description, uom, qi_quantity, unit_price, discount, line_total)
+      const piiQuery = `
+        INSERT INTO proforma_invoice_item (pi_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING qi_id, quot_id, item_id, item_name, item_description, uom, qi_quantity, unit_price, discount, line_total
+        RETURNING pii_id, pi_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total
       `;
 
-      const qiResult = await client.query(qiQuery, [
-        quot.quot_id,
+      const piiResult = await client.query(piiQuery, [
+        pi.pi_id,
         item.item_id || null,
         item.item_name,
         item.item_description,
         item.uom || null,
-        item.qi_quantity,
+        item.pi_quantity,
         item.unit_price,
         item.discount,
         item.line_total,
       ]);
 
-      const lineItem = qiResult.rows[0];
+      const lineItem = piiResult.rows[0];
       items.push(lineItem);
 
-      const qiLogId = await createLog({
+      const piiLogId = await createLog({
         tableId: itemTableId,
-        recordId: String(lineItem.qi_id),
+        recordId: String(lineItem.pii_id),
         actionType: 'INSERT',
         actionBy: userId,
         changedData: {
-          quot_id: quot.quot_id,
+          pi_id: pi.pi_id,
           item_id: item.item_id,
           item_name: item.item_name,
           item_description: item.item_description,
           uom: item.uom,
-          qi_quantity: item.qi_quantity,
+          pi_quantity: item.pi_quantity,
           unit_price: item.unit_price,
           discount: item.discount,
           line_total: item.line_total,
@@ -160,13 +160,13 @@ export const createQuotation = async (
       });
 
       await client.query(
-        'UPDATE quotation_item SET log_id = $1 WHERE qi_id = $2',
-        [qiLogId, lineItem.qi_id]
+        'UPDATE proforma_invoice_item SET log_id = $1 WHERE pii_id = $2',
+        [piiLogId, lineItem.pii_id]
       );
     }
 
     await client.query('COMMIT');
-    return { ...quot, log_id: quotLogId, items };
+    return { ...pi, log_id: piLogId, items };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -176,52 +176,51 @@ export const createQuotation = async (
 };
 
 /**
- * Fetch all quotations with their associated line items.
+ * Fetch all proforma invoices with their associated line items.
  */
-export const getQuotations = async () => {
+export const getProformaInvoices = async () => {
   try {
     const query = `
       SELECT
-        q.quot_id,
-        q.quot_no,
-        q.reference_no,
-        q.terms,
-        q.customer_id,
-        q.remarks,
-        q.status,
-        q.total_amount,
-        q.generated_pi_id,
-        q.created_by,
+        p.pi_id,
+        p.pi_no,
+        p.reference_no,
+        p.terms,
+        p.customer_id,
+        p.remarks,
+        p.status,
+        p.total_amount,
+        p.created_by,
         CONCAT(u.first_name, ' ', u.last_name) AS created_by_name,
         l.action_at AS created_at,
-        COALESCE(q.customer_company_name, c.company_name) AS customer_company_name,
-        q.customer_register_no,
-        q.customer_address,
-        q.customer_phone,
-        q.customer_email,
+        COALESCE(p.customer_company_name, c.company_name) AS customer_company_name,
+        p.customer_register_no,
+        p.customer_address,
+        p.customer_phone,
+        p.customer_email,
         json_agg(
           json_build_object(
-            'qi_id',            qi.qi_id,
-            'item_id',          qi.item_id,
-            'item_name',        qi.item_name,
-            'item_description', qi.item_description,
-            'uom',              qi.uom,
-            'qi_quantity',      qi.qi_quantity,
-            'unit_price',       qi.unit_price,
-            'discount',         qi.discount,
-            'line_total',       qi.line_total
-          ) ORDER BY qi.qi_id
-        ) FILTER (WHERE qi.qi_id IS NOT NULL) AS items
-      FROM quotation q
-      LEFT JOIN customer c ON q.customer_id = c.customer_id
-      LEFT JOIN quotation_item qi ON q.quot_id = qi.quot_id
-      LEFT JOIN users u ON q.created_by = u.auth_id
-      LEFT JOIN log l ON q.log_id = l.log_id
-      GROUP BY q.quot_id, q.quot_no, q.reference_no, q.terms, q.customer_id, q.remarks, q.status,
-               q.total_amount, q.generated_pi_id, q.created_by, u.first_name, u.last_name, l.action_at,
-               q.customer_company_name, c.company_name, q.customer_register_no,
-               q.customer_address, q.customer_phone, q.customer_email
-      ORDER BY q.quot_no DESC
+            'pii_id',           pii.pii_id,
+            'item_id',          pii.item_id,
+            'item_name',        pii.item_name,
+            'item_description', pii.item_description,
+            'uom',              pii.uom,
+            'pi_quantity',     pii.pi_quantity,
+            'unit_price',       pii.unit_price,
+            'discount',         pii.discount,
+            'line_total',       pii.line_total
+          ) ORDER BY pii.pii_id
+        ) FILTER (WHERE pii.pii_id IS NOT NULL) AS items
+      FROM proforma_invoice p
+      LEFT JOIN customer c ON p.customer_id = c.customer_id
+      LEFT JOIN proforma_invoice_item pii ON p.pi_id = pii.pi_id
+      LEFT JOIN users u ON p.created_by = u.auth_id
+      LEFT JOIN log l ON p.log_id = l.log_id
+      GROUP BY p.pi_id, p.pi_no, p.reference_no, p.terms, p.customer_id, p.remarks, p.status,
+               p.total_amount, p.created_by, u.first_name, u.last_name, l.action_at,
+               p.customer_company_name, c.company_name, p.customer_register_no,
+               p.customer_address, p.customer_phone, p.customer_email
+      ORDER BY p.pi_no DESC
     `;
 
     const result = await pool.query(query);
@@ -264,11 +263,11 @@ export const getInventoryItems = async () => {
 };
 
 /**
- * Update a quotation header and its line items with audit logging.
+ * Update a proforma invoice header and its line items with audit logging.
  */
-export const updateQuotation = async (
+export const updateProformaInvoice = async (
   data: {
-    quot_id: string;
+    pi_id: string;
     reference_no?: string;
     terms?: string;
     remarks?: string;
@@ -276,12 +275,12 @@ export const updateQuotation = async (
     customer_id?: number | null;
     total_amount?: number;
     items?: Array<{
-      qi_id?: number;
+      pii_id?: number;
       item_id?: number | null;
       item_name: string;
       item_description: string;
       uom?: string;
-      qi_quantity: number;
+      pi_quantity: number;
       unit_price: number;
       discount: number;
       line_total: number;
@@ -293,12 +292,12 @@ export const updateQuotation = async (
   try {
     await client.query('BEGIN');
 
-    const oldQuotResult = await client.query(
-      'SELECT * FROM quotation WHERE quot_id = $1',
-      [data.quot_id]
+    const oldPiResult = await client.query(
+      'SELECT * FROM proforma_invoice WHERE pi_id = $1',
+      [data.pi_id]
     );
-    if (oldQuotResult.rows.length === 0) throw new Error('Quotation not found');
-    const oldQuot = oldQuotResult.rows[0];
+    if (oldPiResult.rows.length === 0) throw new Error('Proforma invoice not found');
+    const oldPi = oldPiResult.rows[0];
 
     const headerFields: Record<string, any> = {};
     if (data.reference_no !== undefined) headerFields.reference_no = data.reference_no;
@@ -337,45 +336,45 @@ export const updateQuotation = async (
       }
     }
 
-    let updatedQuot = oldQuot;
+    let updatedPi = oldPi;
     if (Object.keys(headerFields).length > 0) {
       const keys = Object.keys(headerFields);
       const setClauses = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
       const updateResult = await client.query(
-        `UPDATE quotation SET ${setClauses} WHERE quot_id = $1 RETURNING *`,
-        [data.quot_id, ...Object.values(headerFields)]
+        `UPDATE proforma_invoice SET ${setClauses} WHERE pi_id = $1 RETURNING *`,
+        [data.pi_id, ...Object.values(headerFields)]
       );
-      updatedQuot = updateResult.rows[0];
+      updatedPi = updateResult.rows[0];
     }
 
-    const quotTableId = await getTableId('quotation');
+    const piTableId = await getTableId('proforma_invoice');
     await createLog({
-      tableId: quotTableId,
-      recordId: data.quot_id,
+      tableId: piTableId,
+      recordId: data.pi_id,
       actionType: 'UPDATE',
       actionBy: userId,
-      changedData: { before: oldQuot, after: updatedQuot },
+      changedData: { before: oldPi, after: updatedPi },
     });
 
     if (data.items !== undefined) {
-      const itemTableId = await getTableId('quotation_item');
+      const itemTableId = await getTableId('proforma_invoice_item');
 
       const existingResult = await client.query(
-        'SELECT qi_id, item_id, item_name, item_description, uom, qi_quantity, unit_price, discount, line_total FROM quotation_item WHERE quot_id = $1',
-        [data.quot_id]
+        'SELECT pii_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total FROM proforma_invoice_item WHERE pi_id = $1',
+        [data.pi_id]
       );
       const existingItems: any[] = existingResult.rows;
 
-      const keptQiIds = new Set(
-        data.items.filter(i => i.qi_id).map(i => i.qi_id)
+      const keptPiiIds = new Set(
+        data.items.filter(i => i.pii_id).map(i => i.pii_id)
       );
 
       for (const existing of existingItems) {
-        if (!keptQiIds.has(existing.qi_id)) {
-          await client.query('DELETE FROM quotation_item WHERE qi_id = $1', [existing.qi_id]);
+        if (!keptPiiIds.has(existing.pii_id)) {
+          await client.query('DELETE FROM proforma_invoice_item WHERE pii_id = $1', [existing.pii_id]);
           await createLog({
             tableId: itemTableId,
-            recordId: String(existing.qi_id),
+            recordId: String(existing.pii_id),
             actionType: 'DELETE',
             actionBy: userId,
             changedData: { before: existing, after: null },
@@ -384,41 +383,41 @@ export const updateQuotation = async (
       }
 
       for (const item of data.items) {
-        const newItemId   = item.item_id || null;
-        const newItemName = item.item_name;
-        const newItemDesc = item.item_description || item.item_name;
-        const newUom      = item.uom || null;
-        const newQty      = item.qi_quantity;
+        const newItemId    = item.item_id || null;
+        const newItemName  = item.item_name;
+        const newItemDesc  = item.item_description || item.item_name;
+        const newUom       = item.uom || null;
+        const newQty       = item.pi_quantity;
         const newUnitPrice = item.unit_price;
         const newDiscount  = item.discount;
         const newLineTotal = item.line_total;
 
-        if (item.qi_id) {
-          const oldItem = existingItems.find(i => i.qi_id === item.qi_id);
+        if (item.pii_id) {
+          const oldItem = existingItems.find(i => i.pii_id === item.pii_id);
           if (!oldItem) continue;
 
           const itemChanged =
-            String(oldItem.item_id)          !== String(newItemId)   ||
-            oldItem.item_name                !== newItemName          ||
-            oldItem.item_description         !== newItemDesc          ||
-            oldItem.uom                      !== newUom               ||
-            parseFloat(oldItem.qi_quantity)  !== newQty               ||
-            parseFloat(oldItem.unit_price)   !== newUnitPrice         ||
-            parseFloat(oldItem.discount)     !== newDiscount          ||
-            parseFloat(oldItem.line_total)   !== newLineTotal;
+            String(oldItem.item_id)           !== String(newItemId)   ||
+            oldItem.item_name                 !== newItemName          ||
+            oldItem.item_description          !== newItemDesc          ||
+            oldItem.uom                       !== newUom               ||
+            parseFloat(oldItem.pi_quantity)  !== newQty               ||
+            parseFloat(oldItem.unit_price)    !== newUnitPrice         ||
+            parseFloat(oldItem.discount)      !== newDiscount          ||
+            parseFloat(oldItem.line_total)    !== newLineTotal;
 
           const updatedItemResult = await client.query(`
-            UPDATE quotation_item
+            UPDATE proforma_invoice_item
             SET item_id = $2, item_name = $3, item_description = $4, uom = $5,
-                qi_quantity = $6, unit_price = $7, discount = $8, line_total = $9
-            WHERE qi_id = $1
-            RETURNING qi_id, item_id, item_name, item_description, uom, qi_quantity, unit_price, discount, line_total
-          `, [item.qi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
+                pi_quantity = $6, unit_price = $7, discount = $8, line_total = $9
+            WHERE pii_id = $1
+            RETURNING pii_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total
+          `, [item.pii_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
 
           if (itemChanged) {
             await createLog({
               tableId: itemTableId,
-              recordId: String(item.qi_id),
+              recordId: String(item.pii_id),
               actionType: 'UPDATE',
               actionBy: userId,
               changedData: { before: oldItem, after: updatedItemResult.rows[0] },
@@ -426,39 +425,39 @@ export const updateQuotation = async (
           }
         } else {
           const insertResult = await client.query(`
-            INSERT INTO quotation_item (quot_id, item_id, item_name, item_description, uom, qi_quantity, unit_price, discount, line_total)
+            INSERT INTO proforma_invoice_item (pi_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING qi_id, item_id, item_name, item_description, uom, qi_quantity, unit_price, discount, line_total
-          `, [data.quot_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
+            RETURNING pii_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total
+          `, [data.pi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
 
           const newItem = insertResult.rows[0];
-          const qiLogId = await createLog({
+          const piiLogId = await createLog({
             tableId: itemTableId,
-            recordId: String(newItem.qi_id),
+            recordId: String(newItem.pii_id),
             actionType: 'INSERT',
             actionBy: userId,
             changedData: {
-              quot_id: data.quot_id,
+              pi_id: data.pi_id,
               item_id: newItemId,
               item_name: newItemName,
               item_description: newItemDesc,
               uom: newUom,
-              qi_quantity: newQty,
+              pi_quantity: newQty,
               unit_price: newUnitPrice,
               discount: newDiscount,
               line_total: newLineTotal,
             },
           });
           await client.query(
-            'UPDATE quotation_item SET log_id = $1 WHERE qi_id = $2',
-            [qiLogId, newItem.qi_id]
+            'UPDATE proforma_invoice_item SET log_id = $1 WHERE pii_id = $2',
+            [piiLogId, newItem.pii_id]
           );
         }
       }
     }
 
     await client.query('COMMIT');
-    return { quot_id: data.quot_id };
+    return { pi_id: data.pi_id };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

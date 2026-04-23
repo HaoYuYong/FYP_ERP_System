@@ -16,6 +16,7 @@ import purchaseRequestRoutes from './routes/purchase-request';
 import purchaseOrderRoutes from './routes/purchase-order';
 import companySettingsRoutes from './routes/company-settings';
 import quotationRoutes from './routes/quotation';
+import proformaInvoiceRoutes from './routes/proforma-invoice';
 
 dotenv.config();
 
@@ -40,6 +41,7 @@ app.use('/api/purchase-request', purchaseRequestRoutes);
 app.use('/api/purchase-order', purchaseOrderRoutes);
 app.use('/api/company-settings', companySettingsRoutes);
 app.use('/api/quotation', quotationRoutes);
+app.use('/api/proforma-invoice', proformaInvoiceRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
