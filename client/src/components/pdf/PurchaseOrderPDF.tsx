@@ -110,10 +110,10 @@ const s = StyleSheet.create({
     marginBottom: 10,
   },
   companyHeaderBlock: {
-    width: '72%',
+    width: '100%',
   },
   companyName: {
-    fontSize: 14,
+    fontSize: 22,
     fontFamily: 'Helvetica-Bold',
     color: '#000000',
     marginBottom: 3,
@@ -125,6 +125,11 @@ const s = StyleSheet.create({
   },
   companyInfoText: {
     fontSize: 8,
+    color: '#000000',
+    marginRight: 10,
+  },
+  companyRegNoText: {
+    fontSize: 7,
     color: '#000000',
     marginRight: 10,
   },
@@ -440,7 +445,7 @@ const PurchaseOrderPDF: React.FC<PurchaseOrderPDFProps> = ({
 
             {company?.register_no ? (
               <View style={s.companyInfoRow}>
-                <Text style={s.companyInfoText}>Reg No: {company.register_no}</Text>
+                <Text style={s.companyRegNoText}>Reg No: {company.register_no}</Text>
               </View>
             ) : null}
 
