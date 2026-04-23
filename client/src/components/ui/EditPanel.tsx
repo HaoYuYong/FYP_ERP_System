@@ -21,6 +21,11 @@ import {
   apiGetQuotationInventoryItems as apiGetQuotInventoryItems,
 } from '../../lib/quotationApi';
 import {
+  apiUpdateProformaInvoice,
+  apiGetPICustomersWithDetails,
+  apiGetPIInventoryItems,
+} from '../../lib/proformaInvoiceApi';
+import {
   apiGetSuppliersWithDetails as apiGetPOSuppliersWithDetails,
   apiGetInventoryItems as apiGetPOInventoryItems,
 } from '../../lib/purchaseOrderApi';
@@ -39,7 +44,7 @@ import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 interface EditPanelProps {
   isOpen: boolean;                    // Whether panel is visible
   onClose: () => void;                // Close panel (without saving)
-  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation'; // Type of entity being edited
+  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation' | 'proforma_invoice'; // Type of entity being edited
   data: any;                          // Current entity data (from table row)
   onUpdate: () => void;               // Callback after successful update
   onDelete?: () => void;              // Callback after successful delete (optional for PR)
@@ -183,6 +188,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [loadingQuotPreview, setLoadingQuotPreview] = useState(false);
 
   // ==============================================
+  // PROFORMA INVOICE EDITING STATE
+  // ==============================================
+
+  const [piItems, setPiItems] = useState<any[]>([]);
+  const [piCustomerId, setPiCustomerId] = useState<number | null>(null);
+  const [piCustomerInfo, setPiCustomerInfo] = useState<any>({});
+  const [allPICustomers, setAllPICustomers] = useState<any[]>([]);
+  const [allPIInventoryItems, setAllPIInventoryItems] = useState<any[]>([]);
+  const [loadingPIDropdowns, setLoadingPIDropdowns] = useState(false);
+
+  const [piRefreshConfirmOpen, setPiRefreshConfirmOpen] = useState(false);
+  const [piRefreshPendingIndex, setPiRefreshPendingIndex] = useState<number | null>(null);
+  const [piRefreshPendingData, setPiRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
+  const [piRefreshDiff, setPiRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
+  const [piItemMessages, setPiItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
+
+  // ==============================================
   // EFFECTS – Load data when panel opens
   // ==============================================
   useEffect(() => {
@@ -245,6 +267,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
           address:         data.customer_address      || '',
         });
         fetchQuotDropdownData();
+      } else if (entityType === 'proforma_invoice') {
+        setPiItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
+        setPiCustomerId(data.customer_id || null);
+        setPiCustomerInfo({
+          company_name:    data.customer_company_name || '',
+          register_no_new: data.customer_register_no  || '',
+          email:           data.customer_email        || '',
+          phone:           data.customer_phone        || '',
+          address:         data.customer_address      || '',
+        });
+        fetchPIDropdownData();
       }
     }
   }, [isOpen, data, entityType]);
@@ -389,6 +422,22 @@ const EditPanel: React.FC<EditPanelProps> = ({
       console.error('Error fetching quotation dropdown data:', err);
     } finally {
       setLoadingQuotDropdowns(false);
+    }
+  };
+
+  const fetchPIDropdownData = async () => {
+    setLoadingPIDropdowns(true);
+    try {
+      const [customersResult, itemsResult] = await Promise.all([
+        apiGetPICustomersWithDetails(),
+        apiGetPIInventoryItems(),
+      ]);
+      if (customersResult.success) setAllPICustomers(customersResult.data || []);
+      if (itemsResult.success)    setAllPIInventoryItems(itemsResult.data || []);
+    } catch (err: any) {
+      console.error('Error fetching proforma invoice dropdown data:', err);
+    } finally {
+      setLoadingPIDropdowns(false);
     }
   };
 
@@ -823,6 +872,149 @@ const EditPanel: React.FC<EditPanelProps> = ({
   };
 
   // ==============================================
+  // PROFORMA INVOICE ITEM / CUSTOMER HANDLERS
+  // ==============================================
+
+  const handlePICustomerChange = (customerId: number | null) => {
+    setPiCustomerId(customerId);
+    if (customerId) {
+      const cust = allPICustomers.find((c: any) => c.customer_id === customerId);
+      if (cust) setPiCustomerInfo(cust);
+    } else {
+      setPiCustomerInfo({});
+    }
+  };
+
+  const handleRefreshPICustomer = () => {
+    if (!piCustomerId) return;
+    const cust = allPICustomers.find((c: any) => c.customer_id === piCustomerId);
+    if (cust) setPiCustomerInfo(cust);
+  };
+
+  const handlePIItemNameChange = (index: number, newItemId: number | string) => {
+    const invItem = allPIInventoryItems.find((i: any) => i.item_id === Number(newItemId));
+    if (!invItem) return;
+    setPiItems(prev =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              item_id: invItem.item_id,
+              item_name: invItem.item_name,
+              item_description: invItem.description || '',
+              uom: invItem.uom || '',
+            }
+          : item
+      )
+    );
+  };
+
+  const handlePIItemFieldChange = (index: number, field: string, value: string) => {
+    setPiItems(prev =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const updated = { ...item, [field]: value };
+        if (field === 'pi_quantity' || field === 'unit_price') {
+          const qty   = parseFloat(field === 'pi_quantity' ? value : item.pi_quantity) || 0;
+          const price = parseFloat(field === 'unit_price'   ? value : item.unit_price)   || 0;
+          updated.line_total = qty * price;
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleAddPIItem = () => {
+    setPiItems(prev => [{
+      _tempId: Date.now(),
+      item_id: null,
+      item_name: '',
+      item_description: '',
+      uom: '',
+      pi_quantity: 1,
+      unit_price: 0,
+      discount: 0,
+      line_total: 0,
+    }, ...prev]);
+  };
+
+  const handleRemovePIItem = (index: number) => {
+    setPiItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const piItemKey = (item: any, index: number): string =>
+    String(item.pii_id ?? item._tempId ?? index);
+
+  const showPIItemMessage = (key: string, type: 'info' | 'success', text: string) => {
+    setPiItemMessages(prev => ({ ...prev, [key]: { type, text } }));
+    setTimeout(() => {
+      setPiItemMessages(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 3000);
+  };
+
+  const handleRefreshPIItem = (index: number) => {
+    const item = piItems[index];
+    if (!item?.item_id) return;
+    const invItem = allPIInventoryItems.find((i: any) => i.item_id === item.item_id);
+    if (!invItem) return;
+
+    const key = piItemKey(item, index);
+
+    const candidateName = invItem.item_name || '';
+    const candidateDesc = invItem.description || '';
+    const candidateUom  = invItem.uom || '';
+
+    const currentName = item.item_name || '';
+    const currentDesc = item.item_description || '';
+    const currentUom  = item.uom || '';
+
+    const diff: { label: string; before: string; after: string }[] = [];
+    if (currentName !== candidateName) diff.push({ label: 'Item Name',        before: currentName, after: candidateName });
+    if (currentDesc !== candidateDesc) diff.push({ label: 'Item Description', before: currentDesc, after: candidateDesc });
+    if (currentUom  !== candidateUom)  diff.push({ label: 'UOM',              before: currentUom,  after: candidateUom });
+
+    if (diff.length === 0) {
+      showPIItemMessage(key, 'info', 'Item is already up to date.');
+      return;
+    }
+
+    setPiRefreshPendingIndex(index);
+    setPiRefreshPendingData({ item_name: candidateName, item_description: candidateDesc, uom: candidateUom });
+    setPiRefreshDiff(diff);
+    setPiRefreshConfirmOpen(true);
+  };
+
+  const handleRefreshPIItemConfirm = () => {
+    if (piRefreshPendingIndex === null || !piRefreshPendingData) return;
+    const index = piRefreshPendingIndex;
+    const item = piItems[index];
+    const key = piItemKey(item, index);
+
+    setPiItems(prev =>
+      prev.map((it, i) =>
+        i === index ? { ...it, ...piRefreshPendingData } : it
+      )
+    );
+
+    setPiRefreshConfirmOpen(false);
+    setPiRefreshPendingIndex(null);
+    setPiRefreshPendingData(null);
+    setPiRefreshDiff([]);
+    showPIItemMessage(key, 'success', 'Item refreshed successfully.');
+  };
+
+  const handleRefreshPIItemCancel = () => {
+    setPiRefreshConfirmOpen(false);
+    setPiRefreshPendingIndex(null);
+    setPiRefreshPendingData(null);
+    setPiRefreshDiff([]);
+  };
+
+  // ==============================================
   // PO RECEIVING MODE HELPERS
   // ==============================================
 
@@ -1146,6 +1338,37 @@ const EditPanel: React.FC<EditPanelProps> = ({
         });
 
         if (!result.success) throw new Error(result.message || 'Failed to update quotation');
+      } else if (entityType === 'proforma_invoice') {
+        if (piItems.some(item => !item.item_name || !item.item_name.trim())) {
+          throw new Error('All items must have an item name selected.');
+        }
+
+        const itemsPayload = piItems.map(item => ({
+          pii_id: item.pii_id,
+          item_id: item.item_id || null,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || null,
+          pi_quantity: parseFloat(item.pi_quantity),
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount) || 0,
+          line_total: parseFloat(item.line_total) || 0,
+        }));
+
+        const piTotalAmount = itemsPayload.reduce((sum, item) => sum + item.line_total, 0);
+
+        const result = await apiUpdateProformaInvoice({
+          pi_id: data.pi_id,
+          reference_no: mainData.reference_no,
+          terms: mainData.terms,
+          remarks: mainData.remarks,
+          status: mainData.status,
+          customer_id: piCustomerId !== undefined ? piCustomerId : undefined,
+          total_amount: piTotalAmount,
+          items: itemsPayload,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update proforma invoice');
       }
 
       // Refresh parent list
@@ -1305,6 +1528,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const isPurchaseRequest = entityType === 'purchase_request';
   const isPurchaseOrder = entityType === 'purchase_order';
   const isQuotation = entityType === 'quotation';
+  const isProformaInvoice = entityType === 'proforma_invoice';
   // All fields (except Status) editable only in Draft
   const isPRFieldsEditable = isPurchaseRequest && data?.status === 'draft';
   // Status dropdown editable in Draft/Sent/Received; locked in Closed
@@ -1315,6 +1539,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // Quotation gate rules (draft/sent/accepted/rejected/closed)
   const isQuotFieldsEditable = isQuotation && data?.status === 'draft';
   const isQuotStatusEditable = isQuotation && data?.status !== 'closed';
+  // Proforma Invoice gate rules (draft/sent/accepted/rejected/closed)
+  const isPIFieldsEditable = isProformaInvoice && data?.status === 'draft';
+  const isPIStatusEditable = isProformaInvoice && data?.status !== 'closed';
 
   const hasAlerts =
     !!error ||
@@ -1327,7 +1554,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
       item => parseFloat(item.poi_quantity) - parseFloat(item.received_quantity ?? 0) < 0
     )) ||
     (isQuotation && !isQuotFieldsEditable && isQuotStatusEditable) ||
-    (isQuotation && !isQuotStatusEditable);
+    (isQuotation && !isQuotStatusEditable) ||
+    (isProformaInvoice && !isPIFieldsEditable && isPIStatusEditable) ||
+    (isProformaInvoice && !isPIStatusEditable);
 
   return (
     <>
@@ -1354,15 +1583,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 ? 'Edit Purchase Order Details'
                 : isQuotation
                   ? 'Edit Quotation Details'
-                  : `Edit ${
-                      entityType === 'inventory'
-                        ? 'Item Details'
-                        : entityType === 'customer'
-                          ? 'Customer Details'
-                          : entityType === 'supplier'
-                            ? 'Supplier Details'
-                            : 'Classification Details'
-                    }`}
+                  : isProformaInvoice
+                    ? 'Edit Proforma Invoice Details'
+                    : `Edit ${
+                        entityType === 'inventory'
+                          ? 'Item Details'
+                          : entityType === 'customer'
+                            ? 'Customer Details'
+                            : entityType === 'supplier'
+                              ? 'Supplier Details'
+                              : 'Classification Details'
+                      }`}
           </h2>
           <button
             onClick={onClose}
@@ -1544,6 +1775,32 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 </button>
               </>
             )}
+
+            {/* Proforma Invoice-only tabs */}
+            {isProformaInvoice && (
+              <>
+                <button
+                  onClick={() => setActiveTab('items')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'items'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Items
+                </button>
+                <button
+                  onClick={() => setActiveTab('supplier')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'supplier'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Customer
+                </button>
+              </>
+            )}
           </nav>
         </div>
         )}
@@ -1580,6 +1837,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
             {isQuotation && !isQuotStatusEditable && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
                 This quotation is <strong>Closed</strong> and cannot be edited.
+              </div>
+            )}
+
+            {/* Proforma Invoice status notices */}
+            {isProformaInvoice && !isPIFieldsEditable && isPIStatusEditable && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                This proforma invoice is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+              </div>
+            )}
+            {isProformaInvoice && !isPIStatusEditable && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                This proforma invoice is <strong>Closed</strong> and cannot be edited.
               </div>
             )}
 
@@ -2090,6 +2359,85 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         {data?.status === 'accepted' && <option value="rejected">Rejected</option>}
                         {data?.status === 'rejected' && <option value="accepted">Accepted</option>}
                         {(data?.status === 'accepted' || data?.status === 'rejected') && <option value="closed">Closed</option>}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {isProformaInvoice && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">PI Number</label>
+                      <input
+                        type="text"
+                        value={mainData.pi_no || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Created By</label>
+                      <input
+                        type="text"
+                        value={data?.created_by_name || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                      <input
+                        type="text"
+                        value={data?.created_at ? new Date(data.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
+                      <input
+                        type="text"
+                        value={mainData.reference_no || ''}
+                        onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPIFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
+                      <input
+                        type="text"
+                        value={mainData.terms || ''}
+                        onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
+                        placeholder="e.g., Net 30 days"
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPIFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                      <textarea
+                        value={mainData.remarks || ''}
+                        onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
+                        rows={3}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPIFieldsEditable}
+                      />
+                    </div>
+                    {/* Status – forward-only: Draft→Confirmed/Closed; Confirmed→Paid/Closed; Paid→Closed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={mainData.status || 'draft'}
+                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPIStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isPIStatusEditable}
+                      >
+                        <option value={data?.status}>{data?.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Draft'}</option>
+                        {data?.status === 'draft' && <option value="confirmed">Confirmed</option>}
+                        {data?.status === 'draft' && <option value="closed">Closed</option>}
+                        {data?.status === 'confirmed' && <option value="paid">Paid</option>}
+                        {data?.status === 'confirmed' && <option value="closed">Closed</option>}
+                        {data?.status === 'paid' && <option value="closed">Closed</option>}
                       </select>
                     </div>
                   </>
@@ -3245,6 +3593,257 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
+            {/* PROFORMA INVOICE ITEMS TAB */}
+            {isProformaInvoice && activeTab === 'items' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Items in Proforma Invoice ({piItems.length})
+                  </span>
+                  {isPIFieldsEditable && (
+                    <button
+                      type="button"
+                      onClick={handleAddPIItem}
+                      disabled={loading}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Item
+                    </button>
+                  )}
+                </div>
+
+                {loadingPIDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading items...</div>
+                ) : piItems.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-4 text-center">No items in this proforma invoice.</p>
+                ) : (
+                  piItems.map((item, index) => (
+                    <div key={item.pii_id ?? item._tempId ?? index} className="border-2 border-gray-300 rounded-lg p-4 space-y-4 bg-gray-50 mb-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Line Item {index + 1}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshPIItem(index)}
+                            disabled={loading || !item.item_id || !isPIFieldsEditable}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            title={!isPIFieldsEditable ? 'Read-only — only draft proforma invoices can be edited' : 'Refresh description and UOM from inventory'}
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Refresh
+                          </button>
+                          {isPIFieldsEditable && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePIItem(index)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {piItemMessages[piItemKey(item, index)] && (
+                        <div className={`text-xs px-3 py-1.5 rounded-md ${
+                          piItemMessages[piItemKey(item, index)].type === 'success'
+                            ? 'bg-green-50 border border-green-200 text-green-700'
+                            : 'bg-blue-50 border border-blue-200 text-blue-700'
+                        }`}>
+                          {piItemMessages[piItemKey(item, index)].text}
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Selecting</label>
+                        <select
+                          value={item.item_id || ''}
+                          onChange={(e) => handlePIItemNameChange(index, e.target.value)}
+                          disabled={loading || !isPIFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        >
+                          {!item.item_id && (
+                            <option value="">{item.item_name || '— Select item —'}</option>
+                          )}
+                          {allPIInventoryItems.map((inv: any) => (
+                            <option key={inv.item_id} value={inv.item_id}>
+                              {inv.description ? `${inv.item_name}(${inv.description})` : inv.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                        <input type="text" value={item.item_id || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
+                        <textarea
+                          value={[item.item_name, item.item_description].filter(Boolean).join('\n')}
+                          readOnly
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm resize-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                        <input type="text" value={item.uom || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={item.pi_quantity}
+                            onChange={(e) => handlePIItemFieldChange(index, 'pi_quantity', e.target.value)}
+                            disabled={loading || !isPIFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={item.unit_price}
+                            onChange={(e) => handlePIItemFieldChange(index, 'unit_price', e.target.value)}
+                            disabled={loading || !isPIFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Line Total</label>
+                        <input
+                          type="text"
+                          value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {piItems.length > 0 && (
+                  <div className="flex justify-end pt-2 border-t border-gray-200">
+                    <div className="bg-gray-50 px-4 py-2 rounded-md border border-gray-200">
+                      <span className="text-sm font-medium text-gray-700 mr-3">Total Amount:</span>
+                      <span className="text-base font-bold text-gray-900">
+                        {piItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                          .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* PROFORMA INVOICE CUSTOMER TAB */}
+            {isProformaInvoice && activeTab === 'supplier' && (
+              <div className="space-y-4">
+                {loadingPIDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading customers...</div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Customer Details</span>
+                      <button
+                        type="button"
+                        onClick={handleRefreshPICustomer}
+                        disabled={loading || !piCustomerId || !isPIFieldsEditable}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                        title={!isPIFieldsEditable ? 'Read-only — only draft proforma invoices can be edited' : 'Refresh customer details from customer list'}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                      <select
+                        value={piCustomerId || ''}
+                        onChange={(e) => handlePICustomerChange(e.target.value ? Number(e.target.value) : null)}
+                        disabled={loading || !isPIFieldsEditable}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isPIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— No customer selected —</option>
+                        {allPICustomers.map((cust: any) => (
+                          <option key={cust.customer_id} value={cust.customer_id}>
+                            {cust.register_no_new
+                              ? `${cust.company_name}(${cust.register_no_new})`
+                              : cust.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Customer ID</label>
+                      <input type="text" value={piCustomerId || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                      <input type="text" value={piCustomerInfo.register_no_new || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input type="text" value={piCustomerInfo.email || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input type="text" value={piCustomerInfo.phone || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={[
+                          piCustomerInfo.address,
+                          piCustomerInfo.city,
+                          piCustomerInfo.state,
+                          piCustomerInfo.country,
+                          piCustomerInfo.post_code,
+                        ].filter(Boolean).join(', ')}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* LIABILITIES TAB (customer/supplier) */}
             {isCustomerSupplier && activeTab === 'liabilities' && (
               <div className="space-y-4">
@@ -3320,6 +3919,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
               <span className="text-xs text-gray-500">Total Amount</span>
               <span className="text-base font-semibold text-gray-800">
                 {quotItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                  .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          ) : isProformaInvoice ? (
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500">Total Amount</span>
+              <span className="text-base font-semibold text-gray-800">
+                {piItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
                   .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -3421,7 +4028,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <button
             onClick={handleUpdate}
             className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center transition-colors"
-            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable)}
+            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable) || (isProformaInvoice && !isPIStatusEditable)}
             title={
               (isPurchaseRequest && !isStatusEditable)
                 ? 'This purchase request is closed and cannot be edited'
@@ -3429,7 +4036,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                   ? 'This purchase order is closed and cannot be edited'
                   : (isQuotation && !isQuotStatusEditable)
                     ? 'This quotation is closed and cannot be edited'
-                    : undefined
+                    : (isProformaInvoice && !isPIStatusEditable)
+                      ? 'This proforma invoice is closed and cannot be edited'
+                      : undefined
             }
           >
             {loading ? (
@@ -3560,6 +4169,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
         cancelLabel="Cancel"
         onConfirm={handleConfirmCloseOutstanding}
         onCancel={() => setShowCloseOutstandingConfirm(false)}
+      />
+
+      {/* Proforma Invoice item refresh confirmation dialog */}
+      <ConfirmationDialog
+        isOpen={piRefreshConfirmOpen}
+        message="The following fields will be overwritten with the latest values from inventory:"
+        confirmLabel="Yes, Refresh"
+        cancelLabel="Cancel"
+        onConfirm={handleRefreshPIItemConfirm}
+        onCancel={handleRefreshPIItemCancel}
+        content={
+          <div className="border border-gray-200 rounded-md overflow-hidden text-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Field</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Current Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">New Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {piRefreshDiff.map((row, i) => (
+                  <tr key={i} className="bg-white">
+                    <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
+                    <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{row.after || <span className="italic text-gray-400">empty</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
       />
 
       {/* ── PR PDF Preview Modal ─────────────────────────────── */}
