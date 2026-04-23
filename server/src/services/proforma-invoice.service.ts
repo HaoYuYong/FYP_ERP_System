@@ -10,6 +10,7 @@ export const createProformaInvoice = async (
     terms?: string;
     customer_id?: number;
     remarks?: string;
+    quot_id?: string;
     items: Array<{
       item_id?: number;
       item_name: string;
@@ -27,6 +28,17 @@ export const createProformaInvoice = async (
 
   try {
     await client.query('BEGIN');
+
+    // Safety check: if quot_id given, ensure quotation has not already generated a PI.
+    if (data.quot_id) {
+      const quotCheck = await client.query(
+        'SELECT generated_pi_id FROM quotation WHERE quot_id = $1 FOR UPDATE',
+        [data.quot_id]
+      );
+      if (!quotCheck.rows[0] || quotCheck.rows[0].generated_pi_id !== null) {
+        throw new Error('This quotation has already been used to generate a proforma invoice');
+      }
+    }
 
     // Get next PI number from sequence.
     const piNoResult = await client.query(
@@ -68,11 +80,13 @@ export const createProformaInvoice = async (
     const piQuery = `
       INSERT INTO proforma_invoice (
         pi_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
-        customer_company_name, customer_register_no, customer_address, customer_phone, customer_email
+        customer_company_name, customer_register_no, customer_address, customer_phone, customer_email,
+        quot_id
       )
-      VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING pi_id, pi_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
-                customer_company_name, customer_register_no, customer_address, customer_phone, customer_email
+                customer_company_name, customer_register_no, customer_address, customer_phone, customer_email,
+                quot_id
     `;
 
     const piResult = await client.query(piQuery, [
@@ -88,6 +102,7 @@ export const createProformaInvoice = async (
       snapshotAddress,
       snapshotPhone,
       snapshotEmail,
+      data.quot_id || null,
     ]);
 
     const pi = piResult.rows[0];
@@ -107,6 +122,7 @@ export const createProformaInvoice = async (
         remarks: data.remarks,
         status: 'draft',
         total_amount: totalAmount,
+        quot_id: data.quot_id || null,
       },
     });
 
@@ -165,6 +181,14 @@ export const createProformaInvoice = async (
       );
     }
 
+    // If generated from a quotation, mark that quotation as generated.
+    if (data.quot_id) {
+      await client.query(
+        'UPDATE quotation SET generated_pi_id = $1 WHERE quot_id = $2',
+        [pi.pi_id, data.quot_id]
+      );
+    }
+
     await client.query('COMMIT');
     return { ...pi, log_id: piLogId, items };
   } catch (error) {
@@ -187,6 +211,7 @@ export const getProformaInvoices = async () => {
         p.reference_no,
         p.terms,
         p.customer_id,
+        p.quot_id,
         p.remarks,
         p.status,
         p.total_amount,
@@ -216,7 +241,7 @@ export const getProformaInvoices = async () => {
       LEFT JOIN proforma_invoice_item pii ON p.pi_id = pii.pi_id
       LEFT JOIN users u ON p.created_by = u.auth_id
       LEFT JOIN log l ON p.log_id = l.log_id
-      GROUP BY p.pi_id, p.pi_no, p.reference_no, p.terms, p.customer_id, p.remarks, p.status,
+      GROUP BY p.pi_id, p.pi_no, p.reference_no, p.terms, p.customer_id, p.quot_id, p.remarks, p.status,
                p.total_amount, p.created_by, u.first_name, u.last_name, l.action_at,
                p.customer_company_name, c.company_name, p.customer_register_no,
                p.customer_address, p.customer_phone, p.customer_email

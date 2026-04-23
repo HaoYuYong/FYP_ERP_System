@@ -54,7 +54,7 @@ router.get('/items', async (req: Request, res: Response) => {
  */
 router.post('/create', async (req: Request, res: Response) => {
   try {
-    const { reference_no, terms, customer_id, remarks, items } = req.body;
+    const { reference_no, terms, customer_id, remarks, items, quot_id } = req.body;
     const userId = req.headers['x-user-id'] as string || 'anonymous';
 
     if (!reference_no || !reference_no.trim()) {
@@ -89,6 +89,7 @@ router.post('/create', async (req: Request, res: Response) => {
         ...(terms ? { terms } : {}),
         ...(customer_id ? { customer_id: parseInt(customer_id) } : {}),
         ...(remarks ? { remarks } : {}),
+        ...(quot_id ? { quot_id: String(quot_id) } : {}),
         items: items.map((item: any) => ({
           ...(item.item_id ? { item_id: parseInt(item.item_id) } : {}),
           item_name: item.item_name,
