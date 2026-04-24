@@ -31,6 +31,11 @@ import {
   apiGetDOInventoryItems,
 } from '../../lib/deliveryOrderApi';
 import {
+  apiUpdateSalesInvoice,
+  apiGetSICustomersWithDetails,
+  apiGetSIInventoryItems,
+} from '../../lib/salesInvoiceApi';
+import {
   apiGetSuppliersWithDetails as apiGetPOSuppliersWithDetails,
   apiGetInventoryItems as apiGetPOInventoryItems,
 } from '../../lib/purchaseOrderApi';
@@ -41,6 +46,7 @@ import PurchaseOrderPDF from '../pdf/PurchaseOrderPDF';
 import QuotationPDF from '../pdf/QuotationPDF';
 import ProformaInvoicePDF from '../pdf/ProformaInvoicePDF';
 import DeliveryOrderPDF from '../pdf/DeliveryOrderPDF';
+import SalesInvoicePDF from '../pdf/SalesInvoicePDF';
 import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 
 // ==============================================
@@ -51,7 +57,7 @@ import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 interface EditPanelProps {
   isOpen: boolean;                    // Whether panel is visible
   onClose: () => void;                // Close panel (without saving)
-  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation' | 'proforma_invoice' | 'delivery_order'; // Type of entity being edited
+  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation' | 'proforma_invoice' | 'delivery_order' | 'sales_invoice'; // Type of entity being edited
   data: any;                          // Current entity data (from table row)
   onUpdate: () => void;               // Callback after successful update
   onDelete?: () => void;              // Callback after successful delete (optional for PR)
@@ -207,6 +213,11 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [doPreviewPrintedBy, setDoPreviewPrintedBy] = useState('');
   const [doPreviewPrintedAt, setDoPreviewPrintedAt] = useState<Date>(new Date());
   const [loadingDOPreview, setLoadingDOPreview] = useState(false);
+  const [showSIPreview, setShowSIPreview] = useState(false);
+  const [siPreviewCompany, setSiPreviewCompany] = useState<any>(null);
+  const [siPreviewPrintedBy, setSiPreviewPrintedBy] = useState('');
+  const [siPreviewPrintedAt, setSiPreviewPrintedAt] = useState<Date>(new Date());
+  const [loadingSIPreview, setLoadingSIPreview] = useState(false);
 
   // ==============================================
   // PROFORMA INVOICE EDITING STATE
@@ -241,6 +252,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [doRefreshPendingData, setDoRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
   const [doRefreshDiff, setDoRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
   const [doItemMessages, setDoItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
+
+  // ==============================================
+  // SALES INVOICE EDITING STATE
+  // ==============================================
+
+  const [siItems, setSiItems] = useState<any[]>([]);
+  const [siCustomerId, setSiCustomerId] = useState<number | null>(null);
+  const [siCustomerInfo, setSiCustomerInfo] = useState<any>({});
+  const [allSICustomers, setAllSICustomers] = useState<any[]>([]);
+  const [allSIInventoryItems, setAllSIInventoryItems] = useState<any[]>([]);
+  const [loadingSIDropdowns, setLoadingSIDropdowns] = useState(false);
+
+  const [siRefreshConfirmOpen, setSiRefreshConfirmOpen] = useState(false);
+  const [siRefreshPendingIndex, setSiRefreshPendingIndex] = useState<number | null>(null);
+  const [siRefreshPendingData, setSiRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
+  const [siRefreshDiff, setSiRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
+  const [siItemMessages, setSiItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
 
   // ==============================================
   // EFFECTS – Load data when panel opens
@@ -327,6 +355,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
           address:         data.customer_address      || '',
         });
         fetchDODropdownData();
+      } else if (entityType === 'sales_invoice') {
+        setSiItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
+        setSiCustomerId(data.customer_id || null);
+        setSiCustomerInfo({
+          company_name:    data.customer_company_name || '',
+          register_no_new: data.customer_register_no  || '',
+          email:           data.customer_email        || '',
+          phone:           data.customer_phone        || '',
+          address:         data.customer_address      || '',
+        });
+        fetchSIDropdownData();
       }
     }
   }, [isOpen, data, entityType]);
@@ -503,6 +542,22 @@ const EditPanel: React.FC<EditPanelProps> = ({
       console.error('Error fetching delivery order dropdown data:', err);
     } finally {
       setLoadingDODropdowns(false);
+    }
+  };
+
+  const fetchSIDropdownData = async () => {
+    setLoadingSIDropdowns(true);
+    try {
+      const [customersResult, itemsResult] = await Promise.all([
+        apiGetSICustomersWithDetails(),
+        apiGetSIInventoryItems(),
+      ]);
+      if (customersResult.success) setAllSICustomers(customersResult.data || []);
+      if (itemsResult.success)    setAllSIInventoryItems(itemsResult.data || []);
+    } catch (err: any) {
+      console.error('Error fetching sales invoice dropdown data:', err);
+    } finally {
+      setLoadingSIDropdowns(false);
     }
   };
 
@@ -1223,6 +1278,149 @@ const EditPanel: React.FC<EditPanelProps> = ({
   };
 
   // ==============================================
+  // SALES INVOICE ITEM / CUSTOMER HANDLERS
+  // ==============================================
+
+  const handleSICustomerChange = (customerId: number | null) => {
+    setSiCustomerId(customerId);
+    if (customerId) {
+      const cust = allSICustomers.find((c: any) => c.customer_id === customerId);
+      if (cust) setSiCustomerInfo(cust);
+    } else {
+      setSiCustomerInfo({});
+    }
+  };
+
+  const handleRefreshSICustomer = () => {
+    if (!siCustomerId) return;
+    const cust = allSICustomers.find((c: any) => c.customer_id === siCustomerId);
+    if (cust) setSiCustomerInfo(cust);
+  };
+
+  const handleSIItemNameChange = (index: number, newItemId: number | string) => {
+    const invItem = allSIInventoryItems.find((i: any) => i.item_id === Number(newItemId));
+    if (!invItem) return;
+    setSiItems(prev =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              item_id: invItem.item_id,
+              item_name: invItem.item_name,
+              item_description: invItem.description || '',
+              uom: invItem.uom || '',
+            }
+          : item
+      )
+    );
+  };
+
+  const handleSIItemFieldChange = (index: number, field: string, value: string) => {
+    setSiItems(prev =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const updated = { ...item, [field]: value };
+        if (field === 'si_quantity' || field === 'unit_price') {
+          const qty   = parseFloat(field === 'si_quantity' ? value : item.si_quantity) || 0;
+          const price = parseFloat(field === 'unit_price'  ? value : item.unit_price)  || 0;
+          updated.line_total = qty * price;
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleAddSIItem = () => {
+    setSiItems(prev => [{
+      _tempId: Date.now(),
+      item_id: null,
+      item_name: '',
+      item_description: '',
+      uom: '',
+      si_quantity: 1,
+      unit_price: 0,
+      discount: 0,
+      line_total: 0,
+    }, ...prev]);
+  };
+
+  const handleRemoveSIItem = (index: number) => {
+    setSiItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const siItemKey = (item: any, index: number): string =>
+    String(item.sii_id ?? item._tempId ?? index);
+
+  const showSIItemMessage = (key: string, type: 'info' | 'success', text: string) => {
+    setSiItemMessages(prev => ({ ...prev, [key]: { type, text } }));
+    setTimeout(() => {
+      setSiItemMessages(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 3000);
+  };
+
+  const handleRefreshSIItem = (index: number) => {
+    const item = siItems[index];
+    if (!item?.item_id) return;
+    const invItem = allSIInventoryItems.find((i: any) => i.item_id === item.item_id);
+    if (!invItem) return;
+
+    const key = siItemKey(item, index);
+
+    const candidateName = invItem.item_name || '';
+    const candidateDesc = invItem.description || '';
+    const candidateUom  = invItem.uom || '';
+
+    const currentName = item.item_name || '';
+    const currentDesc = item.item_description || '';
+    const currentUom  = item.uom || '';
+
+    const diff: { label: string; before: string; after: string }[] = [];
+    if (currentName !== candidateName) diff.push({ label: 'Item Name',        before: currentName, after: candidateName });
+    if (currentDesc !== candidateDesc) diff.push({ label: 'Item Description', before: currentDesc, after: candidateDesc });
+    if (currentUom  !== candidateUom)  diff.push({ label: 'UOM',              before: currentUom,  after: candidateUom });
+
+    if (diff.length === 0) {
+      showSIItemMessage(key, 'info', 'Item is already up to date.');
+      return;
+    }
+
+    setSiRefreshPendingIndex(index);
+    setSiRefreshPendingData({ item_name: candidateName, item_description: candidateDesc, uom: candidateUom });
+    setSiRefreshDiff(diff);
+    setSiRefreshConfirmOpen(true);
+  };
+
+  const handleRefreshSIItemConfirm = () => {
+    if (siRefreshPendingIndex === null || !siRefreshPendingData) return;
+    const index = siRefreshPendingIndex;
+    const item = siItems[index];
+    const key = siItemKey(item, index);
+
+    setSiItems(prev =>
+      prev.map((it, i) =>
+        i === index ? { ...it, ...siRefreshPendingData } : it
+      )
+    );
+
+    setSiRefreshConfirmOpen(false);
+    setSiRefreshPendingIndex(null);
+    setSiRefreshPendingData(null);
+    setSiRefreshDiff([]);
+    showSIItemMessage(key, 'success', 'Item refreshed successfully.');
+  };
+
+  const handleRefreshSIItemCancel = () => {
+    setSiRefreshConfirmOpen(false);
+    setSiRefreshPendingIndex(null);
+    setSiRefreshPendingData(null);
+    setSiRefreshDiff([]);
+  };
+
+  // ==============================================
   // PO RECEIVING MODE HELPERS
   // ==============================================
 
@@ -1609,6 +1807,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
         });
 
         if (!result.success) throw new Error(result.message || 'Failed to update delivery order');
+      } else if (entityType === 'sales_invoice') {
+        if (siItems.some(item => !item.item_name || !item.item_name.trim())) {
+          throw new Error('All items must have an item name selected.');
+        }
+
+        const itemsPayload = siItems.map(item => ({
+          sii_id: item.sii_id,
+          item_id: item.item_id || null,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || null,
+          si_quantity: parseFloat(item.si_quantity),
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount) || 0,
+          line_total: parseFloat(item.line_total) || 0,
+        }));
+
+        const siTotalAmount = itemsPayload.reduce((sum, item) => sum + item.line_total, 0);
+
+        const result = await apiUpdateSalesInvoice({
+          si_id: data.si_id,
+          reference_no: mainData.reference_no,
+          terms: mainData.terms,
+          due_date: mainData.due_date || null,
+          remarks: mainData.remarks,
+          status: mainData.status,
+          customer_id: siCustomerId !== undefined ? siCustomerId : undefined,
+          total_amount: siTotalAmount,
+          items: itemsPayload,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update sales invoice');
       }
 
       // Refresh parent list
@@ -1818,6 +2048,34 @@ const EditPanel: React.FC<EditPanelProps> = ({
     }
   };
 
+  const handleOpenSIPreview = async () => {
+    setLoadingSIPreview(true);
+    try {
+      const [settingsResult, { data: authData }] = await Promise.all([
+        apiGetCompanySettings(),
+        supabase.auth.getUser(),
+      ]);
+      setSiPreviewCompany(settingsResult.success ? settingsResult.data : {});
+      const user = authData?.user;
+      const name =
+        user?.user_metadata?.full_name ||
+        user?.user_metadata?.name ||
+        user?.email ||
+        data?.created_by_name ||
+        'Unknown User';
+      setSiPreviewPrintedBy(name);
+      setSiPreviewPrintedAt(new Date());
+      setShowSIPreview(true);
+    } catch {
+      setSiPreviewCompany({});
+      setSiPreviewPrintedBy(data?.created_by_name || 'Unknown User');
+      setSiPreviewPrintedAt(new Date());
+      setShowSIPreview(true);
+    } finally {
+      setLoadingSIPreview(false);
+    }
+  };
+
   // ==============================================
   // RENDER
   // ==============================================
@@ -1830,6 +2088,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const isQuotation = entityType === 'quotation';
   const isProformaInvoice = entityType === 'proforma_invoice';
   const isDeliveryOrder = entityType === 'delivery_order';
+  const isSalesInvoice = entityType === 'sales_invoice';
   // All fields (except Status) editable only in Draft
   const isPRFieldsEditable = isPurchaseRequest && data?.status === 'draft';
   // Status dropdown editable in Draft/Sent/Received; locked in Closed
@@ -1846,6 +2105,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // Delivery Order gate rules (draft/sent/delivered/closed)
   const isDOFieldsEditable = isDeliveryOrder && data?.status === 'draft';
   const isDOStatusEditable = isDeliveryOrder && data?.status !== 'closed';
+  // Sales Invoice gate rules (draft/sent/paid/overdue/closed)
+  const isSIFieldsEditable = isSalesInvoice && data?.status === 'draft';
+  const isSIStatusEditable = isSalesInvoice && data?.status !== 'closed';
 
   const hasAlerts =
     !!error ||
@@ -1862,7 +2124,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
     (isProformaInvoice && !isPIFieldsEditable && isPIStatusEditable) ||
     (isProformaInvoice && !isPIStatusEditable) ||
     (isDeliveryOrder && !isDOFieldsEditable && isDOStatusEditable) ||
-    (isDeliveryOrder && !isDOStatusEditable);
+    (isDeliveryOrder && !isDOStatusEditable) ||
+    (isSalesInvoice && !isSIFieldsEditable && isSIStatusEditable) ||
+    (isSalesInvoice && !isSIStatusEditable);
 
   return (
     <>
@@ -1893,7 +2157,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                     ? 'Edit Proforma Invoice Details'
                     : isDeliveryOrder
                       ? 'Edit Delivery Order Details'
-                      : `Edit ${
+                      : isSalesInvoice
+                        ? 'Edit Sales Invoice Details'
+                        : `Edit ${
                         entityType === 'inventory'
                           ? 'Item Details'
                           : entityType === 'customer'
@@ -2135,6 +2401,32 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 </button>
               </>
             )}
+
+            {/* Sales Invoice-only tabs */}
+            {isSalesInvoice && (
+              <>
+                <button
+                  onClick={() => setActiveTab('items')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'items'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Items
+                </button>
+                <button
+                  onClick={() => setActiveTab('supplier')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'supplier'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Customer
+                </button>
+              </>
+            )}
           </nav>
         </div>
         )}
@@ -2195,6 +2487,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
             {isDeliveryOrder && !isDOStatusEditable && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
                 This delivery order is <strong>Closed</strong> and cannot be edited.
+              </div>
+            )}
+
+            {/* Sales Invoice status notices */}
+            {isSalesInvoice && !isSIFieldsEditable && isSIStatusEditable && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                This sales invoice is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+              </div>
+            )}
+            {isSalesInvoice && !isSIStatusEditable && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                This sales invoice is <strong>Closed</strong> and cannot be edited.
               </div>
             )}
 
@@ -2873,6 +3177,98 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         {data?.status === 'sent' && <option value="delivered">Delivered</option>}
                         {data?.status === 'sent' && <option value="closed">Closed</option>}
                         {data?.status === 'delivered' && <option value="closed">Closed</option>}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {isSalesInvoice && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">SI Number</label>
+                      <input
+                        type="text"
+                        value={mainData.si_no || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Created By</label>
+                      <input
+                        type="text"
+                        value={data?.created_by_name || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                      <input
+                        type="text"
+                        value={data?.created_at ? new Date(data.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+                      <input
+                        type="date"
+                        value={mainData.due_date ? mainData.due_date.slice(0, 10) : ''}
+                        onChange={(e) => setMainData({ ...mainData, due_date: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isSIFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
+                      <input
+                        type="text"
+                        value={mainData.reference_no || ''}
+                        onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isSIFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
+                      <input
+                        type="text"
+                        value={mainData.terms || ''}
+                        onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
+                        placeholder="e.g., Net 30 days"
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isSIFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                      <textarea
+                        value={mainData.remarks || ''}
+                        onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
+                        rows={3}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isSIFieldsEditable}
+                      />
+                    </div>
+                    {/* Status – forward-only: Draft→Sent/Closed; Sent→Paid/Overdue/Closed; Paid→Closed; Overdue→Paid/Closed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={mainData.status || 'draft'}
+                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isSIStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isSIStatusEditable}
+                      >
+                        <option value={data?.status}>{data?.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Draft'}</option>
+                        {data?.status === 'draft' && <option value="sent">Sent</option>}
+                        {data?.status === 'draft' && <option value="closed">Closed</option>}
+                        {data?.status === 'sent' && <option value="paid">Paid</option>}
+                        {data?.status === 'sent' && <option value="overdue">Overdue</option>}
+                        {data?.status === 'sent' && <option value="closed">Closed</option>}
+                        {data?.status === 'paid' && <option value="closed">Closed</option>}
+                        {data?.status === 'overdue' && <option value="paid">Paid</option>}
+                        {data?.status === 'overdue' && <option value="closed">Closed</option>}
                       </select>
                     </div>
                   </>
@@ -4530,6 +4926,265 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
+            {/* SALES INVOICE ITEMS TAB */}
+            {isSalesInvoice && activeTab === 'items' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Items in Sales Invoice ({siItems.length})
+                  </span>
+                  {isSIFieldsEditable && (
+                    <button
+                      type="button"
+                      onClick={handleAddSIItem}
+                      disabled={loading}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Item
+                    </button>
+                  )}
+                </div>
+
+                {loadingSIDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading items...</div>
+                ) : siItems.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-4 text-center">No items in this sales invoice.</p>
+                ) : (
+                  siItems.map((item, index) => (
+                    <div key={item.sii_id ?? item._tempId ?? index} className="border-2 border-gray-300 rounded-lg p-4 space-y-4 bg-gray-50 mb-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Line Item {index + 1}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshSIItem(index)}
+                            disabled={loading || !item.item_id || !isSIFieldsEditable}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            title={!isSIFieldsEditable ? 'Read-only — only draft sales invoices can be edited' : 'Refresh description and UOM from inventory'}
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Refresh
+                          </button>
+                          {isSIFieldsEditable && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSIItem(index)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {siItemMessages[siItemKey(item, index)] && (
+                        <div className={`text-xs px-3 py-1.5 rounded-md ${
+                          siItemMessages[siItemKey(item, index)].type === 'success'
+                            ? 'bg-green-50 border border-green-200 text-green-700'
+                            : 'bg-blue-50 border border-blue-200 text-blue-700'
+                        }`}>
+                          {siItemMessages[siItemKey(item, index)].text}
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Selecting</label>
+                        <select
+                          value={item.item_id || ''}
+                          onChange={(e) => handleSIItemNameChange(index, e.target.value)}
+                          disabled={loading || !isSIFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        >
+                          {!item.item_id && (
+                            <option value="">{item.item_name || '— Select item —'}</option>
+                          )}
+                          {allSIInventoryItems.map((inv: any) => (
+                            <option key={inv.item_id} value={inv.item_id}>
+                              {inv.description ? `${inv.item_name}(${inv.description})` : inv.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                        <input type="text" value={item.item_id || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
+                        <textarea
+                          value={[item.item_name, item.item_description].filter(Boolean).join('\n')}
+                          readOnly
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm resize-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                        <input type="text" value={item.uom || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount (%)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          max="100"
+                          value={item.discount ?? 0}
+                          onChange={(e) => handleSIItemFieldChange(index, 'discount', e.target.value)}
+                          disabled={loading || !isSIFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={item.si_quantity}
+                            onChange={(e) => handleSIItemFieldChange(index, 'si_quantity', e.target.value)}
+                            disabled={loading || !isSIFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={item.unit_price}
+                            onChange={(e) => handleSIItemFieldChange(index, 'unit_price', e.target.value)}
+                            disabled={loading || !isSIFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Line Total</label>
+                        <input
+                          type="text"
+                          value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {siItems.length > 0 && (
+                  <div className="flex justify-end pt-2 border-t border-gray-200">
+                    <div className="bg-gray-50 px-4 py-2 rounded-md border border-gray-200">
+                      <span className="text-sm font-medium text-gray-700 mr-3">Total Amount:</span>
+                      <span className="text-base font-bold text-gray-900">
+                        {siItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                          .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SALES INVOICE CUSTOMER TAB */}
+            {isSalesInvoice && activeTab === 'supplier' && (
+              <div className="space-y-4">
+                {loadingSIDropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading customers...</div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Customer Details</span>
+                      <button
+                        type="button"
+                        onClick={handleRefreshSICustomer}
+                        disabled={loading || !siCustomerId || !isSIFieldsEditable}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                        title={!isSIFieldsEditable ? 'Read-only — only draft sales invoices can be edited' : 'Refresh customer details from customer list'}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                      <select
+                        value={siCustomerId || ''}
+                        onChange={(e) => handleSICustomerChange(e.target.value ? Number(e.target.value) : null)}
+                        disabled={loading || !isSIFieldsEditable}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isSIFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— No customer selected —</option>
+                        {allSICustomers.map((cust: any) => (
+                          <option key={cust.customer_id} value={cust.customer_id}>
+                            {cust.register_no_new
+                              ? `${cust.company_name}(${cust.register_no_new})`
+                              : cust.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Customer ID</label>
+                      <input type="text" value={siCustomerId || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                      <input type="text" value={siCustomerInfo.register_no_new || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input type="text" value={siCustomerInfo.email || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input type="text" value={siCustomerInfo.phone || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={siCustomerInfo.address || ''}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* LIABILITIES TAB (customer/supplier) */}
             {isCustomerSupplier && activeTab === 'liabilities' && (
               <div className="space-y-4">
@@ -4621,6 +5276,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
               <span className="text-xs text-gray-500">Total Amount</span>
               <span className="text-base font-semibold text-gray-800">
                 {doItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                  .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          ) : isSalesInvoice ? (
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500">Total Amount</span>
+              <span className="text-base font-semibold text-gray-800">
+                {siItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
                   .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -4753,6 +5416,31 @@ const EditPanel: React.FC<EditPanelProps> = ({
               )}
             </button>
           )}
+          {isSalesInvoice && (
+            <button
+              onClick={handleOpenSIPreview}
+              disabled={loadingSIPreview || loading}
+              className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50 transition-colors flex items-center gap-1"
+            >
+              {loadingSIPreview ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  Preview
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={poReceivingMode ? handleCancelReceiving : poUpdateAgainMode ? () => setPoUpdateAgainMode(false) : onClose}
             className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
@@ -4772,7 +5460,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <button
             onClick={handleUpdate}
             className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center transition-colors"
-            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable) || (isProformaInvoice && !isPIStatusEditable) || (isDeliveryOrder && !isDOStatusEditable)}
+            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable) || (isProformaInvoice && !isPIStatusEditable) || (isDeliveryOrder && !isDOStatusEditable) || (isSalesInvoice && !isSIStatusEditable)}
             title={
               (isPurchaseRequest && !isStatusEditable)
                 ? 'This purchase request is closed and cannot be edited'
@@ -4784,7 +5472,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                       ? 'This proforma invoice is closed and cannot be edited'
                       : (isDeliveryOrder && !isDOStatusEditable)
                         ? 'This delivery order is closed and cannot be edited'
-                        : undefined
+                        : (isSalesInvoice && !isSIStatusEditable)
+                          ? 'This sales invoice is closed and cannot be edited'
+                          : undefined
             }
           >
             {loading ? (
@@ -4969,6 +5659,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {doRefreshDiff.map((row, i) => (
+                  <tr key={i} className="bg-white">
+                    <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
+                    <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{row.after || <span className="italic text-gray-400">empty</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
+
+      {/* Sales Invoice item refresh confirmation dialog */}
+      <ConfirmationDialog
+        isOpen={siRefreshConfirmOpen}
+        message="The following fields will be overwritten with the latest values from inventory:"
+        confirmLabel="Yes, Refresh"
+        cancelLabel="Cancel"
+        onConfirm={handleRefreshSIItemConfirm}
+        onCancel={handleRefreshSIItemCancel}
+        content={
+          <div className="border border-gray-200 rounded-md overflow-hidden text-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Field</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Current Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">New Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {siRefreshDiff.map((row, i) => (
                   <tr key={i} className="bg-white">
                     <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
                     <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
@@ -5413,6 +6135,95 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 items={doItems}
                 printedBy={doPreviewPrintedBy}
                 printedAt={doPreviewPrintedAt}
+              />
+            </PDFViewer>
+          </div>
+        </div>
+      )}
+
+      {/* ── SI PDF Preview Modal ─────────────────────────────── */}
+      {showSIPreview && (
+        <div className="fixed inset-0 z-[60] bg-gray-900 flex flex-col">
+          {/* Toolbar */}
+          <div className="flex-shrink-0 bg-gray-800 px-6 py-3 flex items-center justify-between shadow-lg">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-white font-medium text-sm">
+                Sales Invoice Preview
+              </span>
+              <span className="text-gray-400 text-sm">— {mainData.si_no}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSIPreview(false)}
+                className="px-4 py-1.5 border border-gray-500 rounded text-gray-300 hover:bg-gray-700 hover:text-white transition-colors text-sm"
+              >
+                Cancel
+              </button>
+              <PDFDownloadLink
+                document={
+                  <SalesInvoicePDF
+                    siNo={mainData.si_no || ''}
+                    referenceNo={mainData.reference_no || ''}
+                    dueDate={mainData.due_date || ''}
+                    terms={mainData.terms || ''}
+                    remarks={mainData.remarks || ''}
+                    totalAmount={siItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)}
+                    company={siPreviewCompany}
+                    customer={siCustomerInfo}
+                    items={siItems}
+                    printedBy={siPreviewPrintedBy}
+                    printedAt={siPreviewPrintedAt}
+                  />
+                }
+                fileName={`${mainData.si_no || 'sales-invoice'}.pdf`}
+              >
+                {({ loading: pdfLoading }) => (
+                  <button
+                    className="px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
+                    disabled={pdfLoading}
+                  >
+                    {pdfLoading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Preparing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Download
+                      </>
+                    )}
+                  </button>
+                )}
+              </PDFDownloadLink>
+            </div>
+          </div>
+
+          {/* PDF Viewer */}
+          <div className="flex-1 overflow-hidden">
+            <PDFViewer width="100%" height="100%" style={{ border: 'none' }}>
+              <SalesInvoicePDF
+                siNo={mainData.si_no || ''}
+                referenceNo={mainData.reference_no || ''}
+                dueDate={mainData.due_date || ''}
+                terms={mainData.terms || ''}
+                remarks={mainData.remarks || ''}
+                totalAmount={siItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)}
+                company={siPreviewCompany}
+                customer={siCustomerInfo}
+                items={siItems}
+                printedBy={siPreviewPrintedBy}
+                printedAt={siPreviewPrintedAt}
               />
             </PDFViewer>
           </div>
