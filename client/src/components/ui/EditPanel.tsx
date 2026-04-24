@@ -5361,7 +5361,6 @@ const EditPanel: React.FC<EditPanelProps> = ({
                     deliveryDate={mainData.delivery_date || ''}
                     terms={mainData.terms || ''}
                     remarks={mainData.remarks || ''}
-                    totalAmount={doItems.reduce((sum: number, item: any) => sum + (parseFloat(item.line_total) || 0), 0)}
                     company={doPreviewCompany}
                     customer={doCustomerInfo}
                     items={doItems}

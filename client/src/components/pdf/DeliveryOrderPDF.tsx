@@ -41,7 +41,6 @@ export interface DeliveryOrderPDFProps {
   deliveryDate: string;
   terms: string;
   remarks: string;
-  totalAmount: number | string;
   company: DOPDFCompany | null;
   customer: DOPDFCustomer | null;
   items: DOPDFItem[];
@@ -349,7 +348,6 @@ const DeliveryOrderPDF: React.FC<DeliveryOrderPDFProps> = ({
   deliveryDate,
   terms,
   remarks,
-  totalAmount,
   company,
   customer,
   items,
@@ -384,13 +382,6 @@ const DeliveryOrderPDF: React.FC<DeliveryOrderPDFProps> = ({
         ════════════════════════════════════════════════════ */}
         <View style={s.signatureFooter} fixed>
           <View style={s.signatureTopBorder} />
-
-          <View style={s.totalPayableRow}>
-            <View style={s.totalPayableBlock}>
-              <Text style={s.totalPayableLabel}>TOTAL AMOUNT:</Text>
-              <Text style={s.totalPayableValue}>{fmtAmount(totalAmount)}</Text>
-            </View>
-          </View>
 
           <View style={s.signatureRow}>
             <View style={s.signatureBlock}>
@@ -552,12 +543,6 @@ const DeliveryOrderPDF: React.FC<DeliveryOrderPDFProps> = ({
           <View style={s.colQty}>
             <Text style={[s.tableHeaderText, { textAlign: 'right' }]}>Qty</Text>
           </View>
-          <View style={s.colUnitPrice}>
-            <Text style={[s.tableHeaderText, { textAlign: 'right' }]}>Price/Unit</Text>
-          </View>
-          <View style={s.colLineTotal}>
-            <Text style={[s.tableHeaderText, { textAlign: 'right' }]}>Total Price</Text>
-          </View>
         </View>
 
         {items.length === 0 ? (
@@ -568,8 +553,6 @@ const DeliveryOrderPDF: React.FC<DeliveryOrderPDFProps> = ({
             </View>
             <View style={s.colUom} />
             <View style={s.colQty} />
-            <View style={s.colUnitPrice} />
-            <View style={s.colLineTotal} />
           </View>
         ) : (
           items.map((item, index) => (
@@ -593,16 +576,6 @@ const DeliveryOrderPDF: React.FC<DeliveryOrderPDFProps> = ({
               <View style={s.colQty}>
                 <Text style={[s.tableCell, { textAlign: 'right' }]}>
                   {fmtQty(item.do_quantity)}
-                </Text>
-              </View>
-              <View style={s.colUnitPrice}>
-                <Text style={[s.tableCell, { textAlign: 'right' }]}>
-                  {fmtAmount(item.unit_price)}
-                </Text>
-              </View>
-              <View style={s.colLineTotal}>
-                <Text style={[s.tableCell, { textAlign: 'right' }]}>
-                  {fmtAmount(item.line_total)}
                 </Text>
               </View>
             </View>
