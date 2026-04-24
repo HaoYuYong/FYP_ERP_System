@@ -2,21 +2,22 @@ import { pool } from '../config/database';
 import { createLog, getTableId } from '../utils/logger';
 
 /**
- * Create a proforma invoice header with associated line items and logging.
+ * Create a delivery order header with associated line items and logging.
  */
-export const createProformaInvoice = async (
+export const createDeliveryOrder = async (
   data: {
     reference_no?: string;
     terms?: string;
+    delivery_date?: string;
     customer_id?: number;
     remarks?: string;
-    quot_id?: string;
+    pi_id?: string;
     items: Array<{
       item_id?: number;
       item_name: string;
       item_description: string;
       uom?: string;
-      pi_quantity: number;
+      do_quantity: number;
       unit_price: number;
       discount: number;
       line_total: number;
@@ -29,22 +30,28 @@ export const createProformaInvoice = async (
   try {
     await client.query('BEGIN');
 
-    // Safety check: if quot_id given, ensure quotation has not already generated a PI.
-    if (data.quot_id) {
-      const quotCheck = await client.query(
-        'SELECT generated_pi_id FROM quotation WHERE quot_id = $1 FOR UPDATE',
-        [data.quot_id]
+    // Safety check: if pi_id given, ensure PI is paid and not already linked.
+    if (data.pi_id) {
+      const piCheck = await client.query(
+        'SELECT status, generated_do_id FROM proforma_invoice WHERE pi_id = $1 FOR UPDATE',
+        [data.pi_id]
       );
-      if (!quotCheck.rows[0] || quotCheck.rows[0].generated_pi_id !== null) {
-        throw new Error('This quotation has already been used to generate a proforma invoice');
+      if (!piCheck.rows[0]) {
+        throw new Error('Proforma invoice not found');
+      }
+      if (piCheck.rows[0].status !== 'paid') {
+        throw new Error('Proforma invoice must be in Paid status to generate a delivery order');
+      }
+      if (piCheck.rows[0].generated_do_id !== null) {
+        throw new Error('This proforma invoice has already been used to generate a delivery order');
       }
     }
 
-    // Get next PI number from sequence.
-    const piNoResult = await client.query(
-      "SELECT 'PI-' || LPAD(nextval('seq_pi_no')::text, 6, '0') AS pi_no"
+    // Get next DO number from sequence.
+    const doNoResult = await client.query(
+      "SELECT 'DO-' || LPAD(nextval('seq_do_no')::text, 6, '0') AS do_no"
     );
-    const piNo = piNoResult.rows[0].pi_no;
+    const doNo = doNoResult.rows[0].do_no;
 
     // Snapshot customer details at creation time.
     let snapshotCompanyName = null;
@@ -73,26 +80,25 @@ export const createProformaInvoice = async (
       }
     }
 
-    // Compute total_amount from items.
     const totalAmount = data.items.reduce((sum, item) => sum + (item.line_total || 0), 0);
 
-    // Insert proforma invoice header.
-    const piQuery = `
-      INSERT INTO proforma_invoice (
-        pi_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
+    const doQuery = `
+      INSERT INTO delivery_order (
+        do_no, reference_no, terms, delivery_date, customer_id, remarks, status, total_amount, created_by,
         customer_company_name, customer_register_no, customer_address, customer_phone, customer_email,
-        quot_id
+        pi_id
       )
-      VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING pi_id, pi_no, reference_no, terms, customer_id, remarks, status, total_amount, created_by,
+      VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8, $9, $10, $11, $12, $13, $14)
+      RETURNING do_id, do_no, reference_no, terms, delivery_date, customer_id, remarks, status, total_amount, created_by,
                 customer_company_name, customer_register_no, customer_address, customer_phone, customer_email,
-                quot_id
+                pi_id
     `;
 
-    const piResult = await client.query(piQuery, [
-      piNo,
+    const doResult = await client.query(doQuery, [
+      doNo,
       data.reference_no || null,
       data.terms || null,
+      data.delivery_date || null,
       data.customer_id || null,
       data.remarks || null,
       totalAmount,
@@ -102,73 +108,74 @@ export const createProformaInvoice = async (
       snapshotAddress,
       snapshotPhone,
       snapshotEmail,
-      data.quot_id || null,
+      data.pi_id || null,
     ]);
 
-    const pi = piResult.rows[0];
+    const deliveryOrder = doResult.rows[0];
 
-    // Log proforma invoice header creation.
-    const tableId = await getTableId('proforma_invoice');
-    const piLogId = await createLog({
+    // Log delivery order header creation.
+    const tableId = await getTableId('delivery_order');
+    const doLogId = await createLog({
       tableId,
-      recordId: pi.pi_id,
+      recordId: deliveryOrder.do_id,
       actionType: 'INSERT',
       actionBy: userId,
       changedData: {
-        pi_no: pi.pi_no,
+        do_no: deliveryOrder.do_no,
         reference_no: data.reference_no,
         terms: data.terms,
+        delivery_date: data.delivery_date,
         customer_id: data.customer_id,
         remarks: data.remarks,
         status: 'draft',
         total_amount: totalAmount,
-        quot_id: data.quot_id || null,
+        pi_id: data.pi_id || null,
       },
     });
 
     await client.query(
-      'UPDATE proforma_invoice SET log_id = $1 WHERE pi_id = $2',
-      [piLogId, pi.pi_id]
+      'UPDATE delivery_order SET log_id = $1 WHERE do_id = $2',
+      [doLogId, deliveryOrder.do_id]
     );
 
     // Create line items.
     const items = [];
-    const itemTableId = await getTableId('proforma_invoice_item');
+    const itemTableId = await getTableId('delivery_order_item');
 
     for (const item of data.items) {
-      const piiQuery = `
-        INSERT INTO proforma_invoice_item (pi_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total)
+      const doiQuery = `
+        INSERT INTO delivery_order_item (do_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING pii_id, pi_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total
+        RETURNING doi_id, do_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total
       `;
 
-      const piiResult = await client.query(piiQuery, [
-        pi.pi_id,
+      const doiResult = await client.query(doiQuery, [
+        deliveryOrder.do_id,
         item.item_id || null,
         item.item_name,
         item.item_description,
         item.uom || null,
-        item.pi_quantity,
+        item.do_quantity,
         item.unit_price,
         item.discount,
         item.line_total,
       ]);
 
-      const lineItem = piiResult.rows[0];
+      const lineItem = doiResult.rows[0];
       items.push(lineItem);
 
-      const piiLogId = await createLog({
+      const doiLogId = await createLog({
         tableId: itemTableId,
-        recordId: String(lineItem.pii_id),
+        recordId: String(lineItem.doi_id),
         actionType: 'INSERT',
         actionBy: userId,
         changedData: {
-          pi_id: pi.pi_id,
+          do_id: deliveryOrder.do_id,
           item_id: item.item_id,
           item_name: item.item_name,
           item_description: item.item_description,
           uom: item.uom,
-          pi_quantity: item.pi_quantity,
+          do_quantity: item.do_quantity,
           unit_price: item.unit_price,
           discount: item.discount,
           line_total: item.line_total,
@@ -176,21 +183,21 @@ export const createProformaInvoice = async (
       });
 
       await client.query(
-        'UPDATE proforma_invoice_item SET log_id = $1 WHERE pii_id = $2',
-        [piiLogId, lineItem.pii_id]
+        'UPDATE delivery_order_item SET log_id = $1 WHERE doi_id = $2',
+        [doiLogId, lineItem.doi_id]
       );
     }
 
-    // If generated from a quotation, mark that quotation as generated.
-    if (data.quot_id) {
+    // If generated from a PI, mark that PI as linked.
+    if (data.pi_id) {
       await client.query(
-        'UPDATE quotation SET generated_pi_id = $1 WHERE quot_id = $2',
-        [pi.pi_id, data.quot_id]
+        'UPDATE proforma_invoice SET generated_do_id = $1 WHERE pi_id = $2',
+        [deliveryOrder.do_id, data.pi_id]
       );
     }
 
     await client.query('COMMIT');
-    return { ...pi, log_id: piLogId, items };
+    return { ...deliveryOrder, log_id: doLogId, items };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -200,53 +207,53 @@ export const createProformaInvoice = async (
 };
 
 /**
- * Fetch all proforma invoices with their associated line items.
+ * Fetch all delivery orders with their associated line items.
  */
-export const getProformaInvoices = async () => {
+export const getDeliveryOrders = async () => {
   try {
     const query = `
       SELECT
-        p.pi_id,
-        p.pi_no,
-        p.reference_no,
-        p.terms,
-        p.customer_id,
-        p.quot_id,
-        p.generated_do_id,
-        p.remarks,
-        p.status,
-        p.total_amount,
-        p.created_by,
+        d.do_id,
+        d.do_no,
+        d.reference_no,
+        d.terms,
+        d.delivery_date,
+        d.customer_id,
+        d.pi_id,
+        d.remarks,
+        d.status,
+        d.total_amount,
+        d.created_by,
         CONCAT(u.first_name, ' ', u.last_name) AS created_by_name,
         l.action_at AS created_at,
-        COALESCE(p.customer_company_name, c.company_name) AS customer_company_name,
-        p.customer_register_no,
-        p.customer_address,
-        p.customer_phone,
-        p.customer_email,
+        COALESCE(d.customer_company_name, c.company_name) AS customer_company_name,
+        d.customer_register_no,
+        d.customer_address,
+        d.customer_phone,
+        d.customer_email,
         json_agg(
           json_build_object(
-            'pii_id',           pii.pii_id,
-            'item_id',          pii.item_id,
-            'item_name',        pii.item_name,
-            'item_description', pii.item_description,
-            'uom',              pii.uom,
-            'pi_quantity',     pii.pi_quantity,
-            'unit_price',       pii.unit_price,
-            'discount',         pii.discount,
-            'line_total',       pii.line_total
-          ) ORDER BY pii.pii_id
-        ) FILTER (WHERE pii.pii_id IS NOT NULL) AS items
-      FROM proforma_invoice p
-      LEFT JOIN customer c ON p.customer_id = c.customer_id
-      LEFT JOIN proforma_invoice_item pii ON p.pi_id = pii.pi_id
-      LEFT JOIN users u ON p.created_by = u.auth_id
-      LEFT JOIN log l ON p.log_id = l.log_id
-      GROUP BY p.pi_id, p.pi_no, p.reference_no, p.terms, p.customer_id, p.quot_id, p.generated_do_id,
-               p.remarks, p.status, p.total_amount, p.created_by, u.first_name, u.last_name, l.action_at,
-               p.customer_company_name, c.company_name, p.customer_register_no,
-               p.customer_address, p.customer_phone, p.customer_email
-      ORDER BY p.pi_no DESC
+            'doi_id',           doi.doi_id,
+            'item_id',          doi.item_id,
+            'item_name',        doi.item_name,
+            'item_description', doi.item_description,
+            'uom',              doi.uom,
+            'do_quantity',      doi.do_quantity,
+            'unit_price',       doi.unit_price,
+            'discount',         doi.discount,
+            'line_total',       doi.line_total
+          ) ORDER BY doi.doi_id
+        ) FILTER (WHERE doi.doi_id IS NOT NULL) AS items
+      FROM delivery_order d
+      LEFT JOIN customer c ON d.customer_id = c.customer_id
+      LEFT JOIN delivery_order_item doi ON d.do_id = doi.do_id
+      LEFT JOIN users u ON d.created_by = u.auth_id
+      LEFT JOIN log l ON d.log_id = l.log_id
+      GROUP BY d.do_id, d.do_no, d.reference_no, d.terms, d.delivery_date, d.customer_id, d.pi_id,
+               d.remarks, d.status, d.total_amount, d.created_by, u.first_name, u.last_name, l.action_at,
+               d.customer_company_name, c.company_name, d.customer_register_no,
+               d.customer_address, d.customer_phone, d.customer_email
+      ORDER BY d.do_no DESC
     `;
 
     const result = await pool.query(query);
@@ -289,24 +296,25 @@ export const getInventoryItems = async () => {
 };
 
 /**
- * Update a proforma invoice header and its line items with audit logging.
+ * Update a delivery order header and its line items with audit logging.
  */
-export const updateProformaInvoice = async (
+export const updateDeliveryOrder = async (
   data: {
-    pi_id: string;
+    do_id: string;
     reference_no?: string;
     terms?: string;
+    delivery_date?: string | null;
     remarks?: string;
     status?: string;
     customer_id?: number | null;
     total_amount?: number;
     items?: Array<{
-      pii_id?: number;
+      doi_id?: number;
       item_id?: number | null;
       item_name: string;
       item_description: string;
       uom?: string;
-      pi_quantity: number;
+      do_quantity: number;
       unit_price: number;
       discount: number;
       line_total: number;
@@ -318,16 +326,17 @@ export const updateProformaInvoice = async (
   try {
     await client.query('BEGIN');
 
-    const oldPiResult = await client.query(
-      'SELECT * FROM proforma_invoice WHERE pi_id = $1',
-      [data.pi_id]
+    const oldDoResult = await client.query(
+      'SELECT * FROM delivery_order WHERE do_id = $1',
+      [data.do_id]
     );
-    if (oldPiResult.rows.length === 0) throw new Error('Proforma invoice not found');
-    const oldPi = oldPiResult.rows[0];
+    if (oldDoResult.rows.length === 0) throw new Error('Delivery order not found');
+    const oldDo = oldDoResult.rows[0];
 
     const headerFields: Record<string, any> = {};
     if (data.reference_no !== undefined) headerFields.reference_no = data.reference_no;
     if (data.terms !== undefined) headerFields.terms = data.terms;
+    if (data.delivery_date !== undefined) headerFields.delivery_date = data.delivery_date || null;
     if (data.remarks !== undefined) headerFields.remarks = data.remarks;
     if (data.status !== undefined) headerFields.status = data.status;
     if (data.total_amount !== undefined) headerFields.total_amount = data.total_amount;
@@ -362,45 +371,45 @@ export const updateProformaInvoice = async (
       }
     }
 
-    let updatedPi = oldPi;
+    let updatedDo = oldDo;
     if (Object.keys(headerFields).length > 0) {
       const keys = Object.keys(headerFields);
       const setClauses = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
       const updateResult = await client.query(
-        `UPDATE proforma_invoice SET ${setClauses} WHERE pi_id = $1 RETURNING *`,
-        [data.pi_id, ...Object.values(headerFields)]
+        `UPDATE delivery_order SET ${setClauses} WHERE do_id = $1 RETURNING *`,
+        [data.do_id, ...Object.values(headerFields)]
       );
-      updatedPi = updateResult.rows[0];
+      updatedDo = updateResult.rows[0];
     }
 
-    const piTableId = await getTableId('proforma_invoice');
+    const doTableId = await getTableId('delivery_order');
     await createLog({
-      tableId: piTableId,
-      recordId: data.pi_id,
+      tableId: doTableId,
+      recordId: data.do_id,
       actionType: 'UPDATE',
       actionBy: userId,
-      changedData: { before: oldPi, after: updatedPi },
+      changedData: { before: oldDo, after: updatedDo },
     });
 
     if (data.items !== undefined) {
-      const itemTableId = await getTableId('proforma_invoice_item');
+      const itemTableId = await getTableId('delivery_order_item');
 
       const existingResult = await client.query(
-        'SELECT pii_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total FROM proforma_invoice_item WHERE pi_id = $1',
-        [data.pi_id]
+        'SELECT doi_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total FROM delivery_order_item WHERE do_id = $1',
+        [data.do_id]
       );
       const existingItems: any[] = existingResult.rows;
 
-      const keptPiiIds = new Set(
-        data.items.filter(i => i.pii_id).map(i => i.pii_id)
+      const keptDoiIds = new Set(
+        data.items.filter(i => i.doi_id).map(i => i.doi_id)
       );
 
       for (const existing of existingItems) {
-        if (!keptPiiIds.has(existing.pii_id)) {
-          await client.query('DELETE FROM proforma_invoice_item WHERE pii_id = $1', [existing.pii_id]);
+        if (!keptDoiIds.has(existing.doi_id)) {
+          await client.query('DELETE FROM delivery_order_item WHERE doi_id = $1', [existing.doi_id]);
           await createLog({
             tableId: itemTableId,
-            recordId: String(existing.pii_id),
+            recordId: String(existing.doi_id),
             actionType: 'DELETE',
             actionBy: userId,
             changedData: { before: existing, after: null },
@@ -413,13 +422,13 @@ export const updateProformaInvoice = async (
         const newItemName  = item.item_name;
         const newItemDesc  = item.item_description || item.item_name;
         const newUom       = item.uom || null;
-        const newQty       = item.pi_quantity;
+        const newQty       = item.do_quantity;
         const newUnitPrice = item.unit_price;
         const newDiscount  = item.discount;
         const newLineTotal = item.line_total;
 
-        if (item.pii_id) {
-          const oldItem = existingItems.find(i => i.pii_id === item.pii_id);
+        if (item.doi_id) {
+          const oldItem = existingItems.find(i => i.doi_id === item.doi_id);
           if (!oldItem) continue;
 
           const itemChanged =
@@ -427,23 +436,23 @@ export const updateProformaInvoice = async (
             oldItem.item_name                 !== newItemName          ||
             oldItem.item_description          !== newItemDesc          ||
             oldItem.uom                       !== newUom               ||
-            parseFloat(oldItem.pi_quantity)  !== newQty               ||
+            parseFloat(oldItem.do_quantity)  !== newQty               ||
             parseFloat(oldItem.unit_price)    !== newUnitPrice         ||
             parseFloat(oldItem.discount)      !== newDiscount          ||
             parseFloat(oldItem.line_total)    !== newLineTotal;
 
           const updatedItemResult = await client.query(`
-            UPDATE proforma_invoice_item
+            UPDATE delivery_order_item
             SET item_id = $2, item_name = $3, item_description = $4, uom = $5,
-                pi_quantity = $6, unit_price = $7, discount = $8, line_total = $9
-            WHERE pii_id = $1
-            RETURNING pii_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total
-          `, [item.pii_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
+                do_quantity = $6, unit_price = $7, discount = $8, line_total = $9
+            WHERE doi_id = $1
+            RETURNING doi_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total
+          `, [item.doi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
 
           if (itemChanged) {
             await createLog({
               tableId: itemTableId,
-              recordId: String(item.pii_id),
+              recordId: String(item.doi_id),
               actionType: 'UPDATE',
               actionBy: userId,
               changedData: { before: oldItem, after: updatedItemResult.rows[0] },
@@ -451,39 +460,39 @@ export const updateProformaInvoice = async (
           }
         } else {
           const insertResult = await client.query(`
-            INSERT INTO proforma_invoice_item (pi_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total)
+            INSERT INTO delivery_order_item (do_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING pii_id, item_id, item_name, item_description, uom, pi_quantity, unit_price, discount, line_total
-          `, [data.pi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
+            RETURNING doi_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total
+          `, [data.do_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
 
           const newItem = insertResult.rows[0];
-          const piiLogId = await createLog({
+          const doiLogId = await createLog({
             tableId: itemTableId,
-            recordId: String(newItem.pii_id),
+            recordId: String(newItem.doi_id),
             actionType: 'INSERT',
             actionBy: userId,
             changedData: {
-              pi_id: data.pi_id,
+              do_id: data.do_id,
               item_id: newItemId,
               item_name: newItemName,
               item_description: newItemDesc,
               uom: newUom,
-              pi_quantity: newQty,
+              do_quantity: newQty,
               unit_price: newUnitPrice,
               discount: newDiscount,
               line_total: newLineTotal,
             },
           });
           await client.query(
-            'UPDATE proforma_invoice_item SET log_id = $1 WHERE pii_id = $2',
-            [piiLogId, newItem.pii_id]
+            'UPDATE delivery_order_item SET log_id = $1 WHERE doi_id = $2',
+            [doiLogId, newItem.doi_id]
           );
         }
       }
     }
 
     await client.query('COMMIT');
-    return { pi_id: data.pi_id };
+    return { do_id: data.do_id };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
