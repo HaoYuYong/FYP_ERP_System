@@ -26,6 +26,11 @@ import {
   apiGetPIInventoryItems,
 } from '../../lib/proformaInvoiceApi';
 import {
+  apiUpdateDeliveryOrder,
+  apiGetDOCustomersWithDetails,
+  apiGetDOInventoryItems,
+} from '../../lib/deliveryOrderApi';
+import {
   apiGetSuppliersWithDetails as apiGetPOSuppliersWithDetails,
   apiGetInventoryItems as apiGetPOInventoryItems,
 } from '../../lib/purchaseOrderApi';
@@ -35,6 +40,7 @@ import PurchaseRequestPDF from '../pdf/PurchaseRequestPDF';
 import PurchaseOrderPDF from '../pdf/PurchaseOrderPDF';
 import QuotationPDF from '../pdf/QuotationPDF';
 import ProformaInvoicePDF from '../pdf/ProformaInvoicePDF';
+import DeliveryOrderPDF from '../pdf/DeliveryOrderPDF';
 import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 
 // ==============================================
@@ -45,7 +51,7 @@ import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 interface EditPanelProps {
   isOpen: boolean;                    // Whether panel is visible
   onClose: () => void;                // Close panel (without saving)
-  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation' | 'proforma_invoice'; // Type of entity being edited
+  entityType: 'inventory' | 'customer' | 'supplier' | 'classification' | 'purchase_request' | 'purchase_order' | 'quotation' | 'proforma_invoice' | 'delivery_order'; // Type of entity being edited
   data: any;                          // Current entity data (from table row)
   onUpdate: () => void;               // Callback after successful update
   onDelete?: () => void;              // Callback after successful delete (optional for PR)
@@ -195,6 +201,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [piPreviewPrintedAt, setPiPreviewPrintedAt] = useState<Date>(new Date());
   const [loadingPIPreview, setLoadingPIPreview] = useState(false);
 
+  // DO PDF preview state
+  const [showDOPreview, setShowDOPreview] = useState(false);
+  const [doPreviewCompany, setDoPreviewCompany] = useState<any>(null);
+  const [doPreviewPrintedBy, setDoPreviewPrintedBy] = useState('');
+  const [doPreviewPrintedAt, setDoPreviewPrintedAt] = useState<Date>(new Date());
+  const [loadingDOPreview, setLoadingDOPreview] = useState(false);
+
   // ==============================================
   // PROFORMA INVOICE EDITING STATE
   // ==============================================
@@ -211,6 +224,23 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [piRefreshPendingData, setPiRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
   const [piRefreshDiff, setPiRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
   const [piItemMessages, setPiItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
+
+  // ==============================================
+  // DELIVERY ORDER EDITING STATE
+  // ==============================================
+
+  const [doItems, setDoItems] = useState<any[]>([]);
+  const [doCustomerId, setDoCustomerId] = useState<number | null>(null);
+  const [doCustomerInfo, setDoCustomerInfo] = useState<any>({});
+  const [allDOCustomers, setAllDOCustomers] = useState<any[]>([]);
+  const [allDOInventoryItems, setAllDOInventoryItems] = useState<any[]>([]);
+  const [loadingDODropdowns, setLoadingDODropdowns] = useState(false);
+
+  const [doRefreshConfirmOpen, setDoRefreshConfirmOpen] = useState(false);
+  const [doRefreshPendingIndex, setDoRefreshPendingIndex] = useState<number | null>(null);
+  const [doRefreshPendingData, setDoRefreshPendingData] = useState<{ item_name: string; item_description: string; uom: string } | null>(null);
+  const [doRefreshDiff, setDoRefreshDiff] = useState<{ label: string; before: string; after: string }[]>([]);
+  const [doItemMessages, setDoItemMessages] = useState<Record<string, { type: 'info' | 'success'; text: string }>>({});
 
   // ==============================================
   // EFFECTS – Load data when panel opens
@@ -286,6 +316,17 @@ const EditPanel: React.FC<EditPanelProps> = ({
           address:         data.customer_address      || '',
         });
         fetchPIDropdownData();
+      } else if (entityType === 'delivery_order') {
+        setDoItems(data.items ? data.items.map((i: any) => ({ ...i })) : []);
+        setDoCustomerId(data.customer_id || null);
+        setDoCustomerInfo({
+          company_name:    data.customer_company_name || '',
+          register_no_new: data.customer_register_no  || '',
+          email:           data.customer_email        || '',
+          phone:           data.customer_phone        || '',
+          address:         data.customer_address      || '',
+        });
+        fetchDODropdownData();
       }
     }
   }, [isOpen, data, entityType]);
@@ -446,6 +487,22 @@ const EditPanel: React.FC<EditPanelProps> = ({
       console.error('Error fetching proforma invoice dropdown data:', err);
     } finally {
       setLoadingPIDropdowns(false);
+    }
+  };
+
+  const fetchDODropdownData = async () => {
+    setLoadingDODropdowns(true);
+    try {
+      const [customersResult, itemsResult] = await Promise.all([
+        apiGetDOCustomersWithDetails(),
+        apiGetDOInventoryItems(),
+      ]);
+      if (customersResult.success) setAllDOCustomers(customersResult.data || []);
+      if (itemsResult.success)    setAllDOInventoryItems(itemsResult.data || []);
+    } catch (err: any) {
+      console.error('Error fetching delivery order dropdown data:', err);
+    } finally {
+      setLoadingDODropdowns(false);
     }
   };
 
@@ -1023,6 +1080,149 @@ const EditPanel: React.FC<EditPanelProps> = ({
   };
 
   // ==============================================
+  // DELIVERY ORDER ITEM / CUSTOMER HANDLERS
+  // ==============================================
+
+  const handleDOCustomerChange = (customerId: number | null) => {
+    setDoCustomerId(customerId);
+    if (customerId) {
+      const cust = allDOCustomers.find((c: any) => c.customer_id === customerId);
+      if (cust) setDoCustomerInfo(cust);
+    } else {
+      setDoCustomerInfo({});
+    }
+  };
+
+  const handleRefreshDOCustomer = () => {
+    if (!doCustomerId) return;
+    const cust = allDOCustomers.find((c: any) => c.customer_id === doCustomerId);
+    if (cust) setDoCustomerInfo(cust);
+  };
+
+  const handleDOItemNameChange = (index: number, newItemId: number | string) => {
+    const invItem = allDOInventoryItems.find((i: any) => i.item_id === Number(newItemId));
+    if (!invItem) return;
+    setDoItems(prev =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              item_id: invItem.item_id,
+              item_name: invItem.item_name,
+              item_description: invItem.description || '',
+              uom: invItem.uom || '',
+            }
+          : item
+      )
+    );
+  };
+
+  const handleDOItemFieldChange = (index: number, field: string, value: string) => {
+    setDoItems(prev =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const updated = { ...item, [field]: value };
+        if (field === 'do_quantity' || field === 'unit_price') {
+          const qty   = parseFloat(field === 'do_quantity' ? value : item.do_quantity) || 0;
+          const price = parseFloat(field === 'unit_price'  ? value : item.unit_price)  || 0;
+          updated.line_total = qty * price;
+        }
+        return updated;
+      })
+    );
+  };
+
+  const handleAddDOItem = () => {
+    setDoItems(prev => [{
+      _tempId: Date.now(),
+      item_id: null,
+      item_name: '',
+      item_description: '',
+      uom: '',
+      do_quantity: 1,
+      unit_price: 0,
+      discount: 0,
+      line_total: 0,
+    }, ...prev]);
+  };
+
+  const handleRemoveDOItem = (index: number) => {
+    setDoItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const doItemKey = (item: any, index: number): string =>
+    String(item.doi_id ?? item._tempId ?? index);
+
+  const showDOItemMessage = (key: string, type: 'info' | 'success', text: string) => {
+    setDoItemMessages(prev => ({ ...prev, [key]: { type, text } }));
+    setTimeout(() => {
+      setDoItemMessages(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }, 3000);
+  };
+
+  const handleRefreshDOItem = (index: number) => {
+    const item = doItems[index];
+    if (!item?.item_id) return;
+    const invItem = allDOInventoryItems.find((i: any) => i.item_id === item.item_id);
+    if (!invItem) return;
+
+    const key = doItemKey(item, index);
+
+    const candidateName = invItem.item_name || '';
+    const candidateDesc = invItem.description || '';
+    const candidateUom  = invItem.uom || '';
+
+    const currentName = item.item_name || '';
+    const currentDesc = item.item_description || '';
+    const currentUom  = item.uom || '';
+
+    const diff: { label: string; before: string; after: string }[] = [];
+    if (currentName !== candidateName) diff.push({ label: 'Item Name',        before: currentName, after: candidateName });
+    if (currentDesc !== candidateDesc) diff.push({ label: 'Item Description', before: currentDesc, after: candidateDesc });
+    if (currentUom  !== candidateUom)  diff.push({ label: 'UOM',              before: currentUom,  after: candidateUom });
+
+    if (diff.length === 0) {
+      showDOItemMessage(key, 'info', 'Item is already up to date.');
+      return;
+    }
+
+    setDoRefreshPendingIndex(index);
+    setDoRefreshPendingData({ item_name: candidateName, item_description: candidateDesc, uom: candidateUom });
+    setDoRefreshDiff(diff);
+    setDoRefreshConfirmOpen(true);
+  };
+
+  const handleRefreshDOItemConfirm = () => {
+    if (doRefreshPendingIndex === null || !doRefreshPendingData) return;
+    const index = doRefreshPendingIndex;
+    const item = doItems[index];
+    const key = doItemKey(item, index);
+
+    setDoItems(prev =>
+      prev.map((it, i) =>
+        i === index ? { ...it, ...doRefreshPendingData } : it
+      )
+    );
+
+    setDoRefreshConfirmOpen(false);
+    setDoRefreshPendingIndex(null);
+    setDoRefreshPendingData(null);
+    setDoRefreshDiff([]);
+    showDOItemMessage(key, 'success', 'Item refreshed successfully.');
+  };
+
+  const handleRefreshDOItemCancel = () => {
+    setDoRefreshConfirmOpen(false);
+    setDoRefreshPendingIndex(null);
+    setDoRefreshPendingData(null);
+    setDoRefreshDiff([]);
+  };
+
+  // ==============================================
   // PO RECEIVING MODE HELPERS
   // ==============================================
 
@@ -1377,6 +1577,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
         });
 
         if (!result.success) throw new Error(result.message || 'Failed to update proforma invoice');
+      } else if (entityType === 'delivery_order') {
+        if (doItems.some(item => !item.item_name || !item.item_name.trim())) {
+          throw new Error('All items must have an item name selected.');
+        }
+
+        const itemsPayload = doItems.map(item => ({
+          doi_id: item.doi_id,
+          item_id: item.item_id || null,
+          item_name: item.item_name,
+          item_description: item.item_description || item.item_name,
+          uom: item.uom || null,
+          do_quantity: parseFloat(item.do_quantity),
+          unit_price: parseFloat(item.unit_price) || 0,
+          discount: parseFloat(item.discount) || 0,
+          line_total: parseFloat(item.line_total) || 0,
+        }));
+
+        const doTotalAmount = itemsPayload.reduce((sum, item) => sum + item.line_total, 0);
+
+        const result = await apiUpdateDeliveryOrder({
+          do_id: data.do_id,
+          reference_no: mainData.reference_no,
+          terms: mainData.terms,
+          delivery_date: mainData.delivery_date || null,
+          remarks: mainData.remarks,
+          status: mainData.status,
+          customer_id: doCustomerId !== undefined ? doCustomerId : undefined,
+          total_amount: doTotalAmount,
+          items: itemsPayload,
+        });
+
+        if (!result.success) throw new Error(result.message || 'Failed to update delivery order');
       }
 
       // Refresh parent list
@@ -1558,6 +1790,34 @@ const EditPanel: React.FC<EditPanelProps> = ({
     }
   };
 
+  const handleOpenDOPreview = async () => {
+    setLoadingDOPreview(true);
+    try {
+      const [settingsResult, { data: authData }] = await Promise.all([
+        apiGetCompanySettings(),
+        supabase.auth.getUser(),
+      ]);
+      setDoPreviewCompany(settingsResult.success ? settingsResult.data : {});
+      const user = authData?.user;
+      const name =
+        user?.user_metadata?.full_name ||
+        user?.user_metadata?.name ||
+        user?.email ||
+        data?.created_by_name ||
+        'Unknown User';
+      setDoPreviewPrintedBy(name);
+      setDoPreviewPrintedAt(new Date());
+      setShowDOPreview(true);
+    } catch {
+      setDoPreviewCompany({});
+      setDoPreviewPrintedBy(data?.created_by_name || 'Unknown User');
+      setDoPreviewPrintedAt(new Date());
+      setShowDOPreview(true);
+    } finally {
+      setLoadingDOPreview(false);
+    }
+  };
+
   // ==============================================
   // RENDER
   // ==============================================
@@ -1569,6 +1829,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const isPurchaseOrder = entityType === 'purchase_order';
   const isQuotation = entityType === 'quotation';
   const isProformaInvoice = entityType === 'proforma_invoice';
+  const isDeliveryOrder = entityType === 'delivery_order';
   // All fields (except Status) editable only in Draft
   const isPRFieldsEditable = isPurchaseRequest && data?.status === 'draft';
   // Status dropdown editable in Draft/Sent/Received; locked in Closed
@@ -1582,6 +1843,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
   // Proforma Invoice gate rules (draft/sent/accepted/rejected/closed)
   const isPIFieldsEditable = isProformaInvoice && data?.status === 'draft';
   const isPIStatusEditable = isProformaInvoice && data?.status !== 'closed';
+  // Delivery Order gate rules (draft/sent/delivered/closed)
+  const isDOFieldsEditable = isDeliveryOrder && data?.status === 'draft';
+  const isDOStatusEditable = isDeliveryOrder && data?.status !== 'closed';
 
   const hasAlerts =
     !!error ||
@@ -1596,7 +1860,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
     (isQuotation && !isQuotFieldsEditable && isQuotStatusEditable) ||
     (isQuotation && !isQuotStatusEditable) ||
     (isProformaInvoice && !isPIFieldsEditable && isPIStatusEditable) ||
-    (isProformaInvoice && !isPIStatusEditable);
+    (isProformaInvoice && !isPIStatusEditable) ||
+    (isDeliveryOrder && !isDOFieldsEditable && isDOStatusEditable) ||
+    (isDeliveryOrder && !isDOStatusEditable);
 
   return (
     <>
@@ -1625,7 +1891,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                   ? 'Edit Quotation Details'
                   : isProformaInvoice
                     ? 'Edit Proforma Invoice Details'
-                    : `Edit ${
+                    : isDeliveryOrder
+                      ? 'Edit Delivery Order Details'
+                      : `Edit ${
                         entityType === 'inventory'
                           ? 'Item Details'
                           : entityType === 'customer'
@@ -1841,6 +2109,32 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 </button>
               </>
             )}
+
+            {/* Delivery Order-only tabs */}
+            {isDeliveryOrder && (
+              <>
+                <button
+                  onClick={() => setActiveTab('items')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'items'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Items
+                </button>
+                <button
+                  onClick={() => setActiveTab('supplier')}
+                  className={`py-1 px-3 border-b-2 font-medium text-sm ${
+                    activeTab === 'supplier'
+                      ? 'border-primary-500 text-primary-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  Customer
+                </button>
+              </>
+            )}
           </nav>
         </div>
         )}
@@ -1889,6 +2183,18 @@ const EditPanel: React.FC<EditPanelProps> = ({
             {isProformaInvoice && !isPIStatusEditable && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
                 This proforma invoice is <strong>Closed</strong> and cannot be edited.
+              </div>
+            )}
+
+            {/* Delivery Order status notices */}
+            {isDeliveryOrder && !isDOFieldsEditable && isDOStatusEditable && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-md text-sm">
+                This delivery order is <strong className="capitalize">{data?.status}</strong>. All fields are read-only — only the <strong>Status</strong> can be updated.
+              </div>
+            )}
+            {isDeliveryOrder && !isDOStatusEditable && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+                This delivery order is <strong>Closed</strong> and cannot be edited.
               </div>
             )}
 
@@ -2478,6 +2784,95 @@ const EditPanel: React.FC<EditPanelProps> = ({
                         {data?.status === 'confirmed' && <option value="paid">Paid</option>}
                         {data?.status === 'confirmed' && <option value="closed">Closed</option>}
                         {data?.status === 'paid' && <option value="closed">Closed</option>}
+                      </select>
+                    </div>
+                  </>
+                )}
+                {isDeliveryOrder && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">DO Number</label>
+                      <input
+                        type="text"
+                        value={mainData.do_no || ''}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Created By</label>
+                      <input
+                        type="text"
+                        value={data?.created_by_name || '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                      <input
+                        type="text"
+                        value={data?.created_at ? new Date(data.created_at).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Delivery Date</label>
+                      <input
+                        type="date"
+                        value={mainData.delivery_date ? mainData.delivery_date.slice(0, 10) : ''}
+                        onChange={(e) => setMainData({ ...mainData, delivery_date: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isDOFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Reference Number</label>
+                      <input
+                        type="text"
+                        value={mainData.reference_no || ''}
+                        onChange={(e) => setMainData({ ...mainData, reference_no: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isDOFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Terms</label>
+                      <input
+                        type="text"
+                        value={mainData.terms || ''}
+                        onChange={(e) => setMainData({ ...mainData, terms: e.target.value })}
+                        placeholder="e.g., Net 30 days"
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isDOFieldsEditable}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                      <textarea
+                        value={mainData.remarks || ''}
+                        onChange={(e) => setMainData({ ...mainData, remarks: e.target.value })}
+                        rows={3}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isDOFieldsEditable}
+                      />
+                    </div>
+                    {/* Status – forward-only: Draft→Sent/Closed; Sent→Delivered/Closed; Delivered→Closed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select
+                        value={mainData.status || 'draft'}
+                        onChange={(e) => setMainData({ ...mainData, status: e.target.value })}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isDOStatusEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        disabled={loading || !isDOStatusEditable}
+                      >
+                        <option value={data?.status}>{data?.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Draft'}</option>
+                        {data?.status === 'draft' && <option value="sent">Sent</option>}
+                        {data?.status === 'draft' && <option value="closed">Closed</option>}
+                        {data?.status === 'sent' && <option value="delivered">Delivered</option>}
+                        {data?.status === 'sent' && <option value="closed">Closed</option>}
+                        {data?.status === 'delivered' && <option value="closed">Closed</option>}
                       </select>
                     </div>
                   </>
@@ -3884,6 +4279,257 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </div>
             )}
 
+            {/* DELIVERY ORDER ITEMS TAB */}
+            {isDeliveryOrder && activeTab === 'items' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Items in Delivery Order ({doItems.length})
+                  </span>
+                  {isDOFieldsEditable && (
+                    <button
+                      type="button"
+                      onClick={handleAddDOItem}
+                      disabled={loading}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 rounded-md transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Item
+                    </button>
+                  )}
+                </div>
+
+                {loadingDODropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading items...</div>
+                ) : doItems.length === 0 ? (
+                  <p className="text-sm text-gray-500 py-4 text-center">No items in this delivery order.</p>
+                ) : (
+                  doItems.map((item, index) => (
+                    <div key={item.doi_id ?? item._tempId ?? index} className="border-2 border-gray-300 rounded-lg p-4 space-y-4 bg-gray-50 mb-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          Line Item {index + 1}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshDOItem(index)}
+                            disabled={loading || !item.item_id || !isDOFieldsEditable}
+                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            title={!isDOFieldsEditable ? 'Read-only — only draft delivery orders can be edited' : 'Refresh description and UOM from inventory'}
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Refresh
+                          </button>
+                          {isDOFieldsEditable && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDOItem(index)}
+                              disabled={loading}
+                              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {doItemMessages[doItemKey(item, index)] && (
+                        <div className={`text-xs px-3 py-1.5 rounded-md ${
+                          doItemMessages[doItemKey(item, index)].type === 'success'
+                            ? 'bg-green-50 border border-green-200 text-green-700'
+                            : 'bg-blue-50 border border-blue-200 text-blue-700'
+                        }`}>
+                          {doItemMessages[doItemKey(item, index)].text}
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Selecting</label>
+                        <select
+                          value={item.item_id || ''}
+                          onChange={(e) => handleDOItemNameChange(index, e.target.value)}
+                          disabled={loading || !isDOFieldsEditable}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                        >
+                          {!item.item_id && (
+                            <option value="">{item.item_name || '— Select item —'}</option>
+                          )}
+                          {allDOInventoryItems.map((inv: any) => (
+                            <option key={inv.item_id} value={inv.item_id}>
+                              {inv.description ? `${inv.item_name}(${inv.description})` : inv.item_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item ID</label>
+                        <input type="text" value={item.item_id || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Item Description</label>
+                        <textarea
+                          value={[item.item_name, item.item_description].filter(Boolean).join('\n')}
+                          readOnly
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm resize-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+                        <input type="text" value={item.uom || ''} readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm" />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0.01"
+                            value={item.do_quantity}
+                            onChange={(e) => handleDOItemFieldChange(index, 'do_quantity', e.target.value)}
+                            disabled={loading || !isDOFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={item.unit_price}
+                            onChange={(e) => handleDOItemFieldChange(index, 'unit_price', e.target.value)}
+                            disabled={loading || !isDOFieldsEditable}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Line Total</label>
+                        <input
+                          type="text"
+                          value={Number(item.line_total || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          readOnly
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 cursor-not-allowed text-sm"
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {doItems.length > 0 && (
+                  <div className="flex justify-end pt-2 border-t border-gray-200">
+                    <div className="bg-gray-50 px-4 py-2 rounded-md border border-gray-200">
+                      <span className="text-sm font-medium text-gray-700 mr-3">Total Amount:</span>
+                      <span className="text-base font-bold text-gray-900">
+                        {doItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                          .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* DELIVERY ORDER CUSTOMER TAB */}
+            {isDeliveryOrder && activeTab === 'supplier' && (
+              <div className="space-y-4">
+                {loadingDODropdowns ? (
+                  <div className="text-center py-4 text-gray-500">Loading customers...</div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Customer Details</span>
+                      <button
+                        type="button"
+                        onClick={handleRefreshDOCustomer}
+                        disabled={loading || !doCustomerId || !isDOFieldsEditable}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed rounded-md transition-colors"
+                        title={!isDOFieldsEditable ? 'Read-only — only draft delivery orders can be edited' : 'Refresh customer details from customer list'}
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Refresh
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                      <select
+                        value={doCustomerId || ''}
+                        onChange={(e) => handleDOCustomerChange(e.target.value ? Number(e.target.value) : null)}
+                        disabled={loading || !isDOFieldsEditable}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${!isDOFieldsEditable ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— No customer selected —</option>
+                        {allDOCustomers.map((cust: any) => (
+                          <option key={cust.customer_id} value={cust.customer_id}>
+                            {cust.register_no_new
+                              ? `${cust.company_name}(${cust.register_no_new})`
+                              : cust.company_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Customer ID</label>
+                      <input type="text" value={doCustomerId || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Register No</label>
+                      <input type="text" value={doCustomerInfo.register_no_new || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input type="text" value={doCustomerInfo.email || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                      <input type="text" value={doCustomerInfo.phone || ''} readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                      <textarea
+                        value={[
+                          doCustomerInfo.address,
+                          doCustomerInfo.city,
+                          doCustomerInfo.state,
+                          doCustomerInfo.country,
+                          doCustomerInfo.post_code,
+                        ].filter(Boolean).join(', ')}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* LIABILITIES TAB (customer/supplier) */}
             {isCustomerSupplier && activeTab === 'liabilities' && (
               <div className="space-y-4">
@@ -3967,6 +4613,14 @@ const EditPanel: React.FC<EditPanelProps> = ({
               <span className="text-xs text-gray-500">Total Amount</span>
               <span className="text-base font-semibold text-gray-800">
                 {piItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
+                  .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          ) : isDeliveryOrder ? (
+            <div className="flex flex-col">
+              <span className="text-xs text-gray-500">Total Amount</span>
+              <span className="text-base font-semibold text-gray-800">
+                {doItems.reduce((sum, item) => sum + (parseFloat(item.line_total) || 0), 0)
                   .toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -4074,6 +4728,31 @@ const EditPanel: React.FC<EditPanelProps> = ({
               )}
             </button>
           )}
+          {isDeliveryOrder && (
+            <button
+              onClick={handleOpenDOPreview}
+              disabled={loadingDOPreview || loading}
+              className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50 transition-colors flex items-center gap-1"
+            >
+              {loadingDOPreview ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  Preview
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={poReceivingMode ? handleCancelReceiving : poUpdateAgainMode ? () => setPoUpdateAgainMode(false) : onClose}
             className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
@@ -4093,7 +4772,7 @@ const EditPanel: React.FC<EditPanelProps> = ({
           <button
             onClick={handleUpdate}
             className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50 flex items-center transition-colors"
-            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable) || (isProformaInvoice && !isPIStatusEditable)}
+            disabled={loading || (isPurchaseRequest && !isStatusEditable) || (isPurchaseOrder && !isPOStatusEditable) || (isQuotation && !isQuotStatusEditable) || (isProformaInvoice && !isPIStatusEditable) || (isDeliveryOrder && !isDOStatusEditable)}
             title={
               (isPurchaseRequest && !isStatusEditable)
                 ? 'This purchase request is closed and cannot be edited'
@@ -4103,7 +4782,9 @@ const EditPanel: React.FC<EditPanelProps> = ({
                     ? 'This quotation is closed and cannot be edited'
                     : (isProformaInvoice && !isPIStatusEditable)
                       ? 'This proforma invoice is closed and cannot be edited'
-                      : undefined
+                      : (isDeliveryOrder && !isDOStatusEditable)
+                        ? 'This delivery order is closed and cannot be edited'
+                        : undefined
             }
           >
             {loading ? (
@@ -4256,6 +4937,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {piRefreshDiff.map((row, i) => (
+                  <tr key={i} className="bg-white">
+                    <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
+                    <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
+                    <td className="px-3 py-2 text-green-700 font-medium">{row.after || <span className="italic text-gray-400">empty</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
+
+      {/* Delivery Order item refresh confirmation dialog */}
+      <ConfirmationDialog
+        isOpen={doRefreshConfirmOpen}
+        message="The following fields will be overwritten with the latest values from inventory:"
+        confirmLabel="Yes, Refresh"
+        cancelLabel="Cancel"
+        onConfirm={handleRefreshDOItemConfirm}
+        onCancel={handleRefreshDOItemCancel}
+        content={
+          <div className="border border-gray-200 rounded-md overflow-hidden text-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Field</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">Current Value</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/3">New Value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {doRefreshDiff.map((row, i) => (
                   <tr key={i} className="bg-white">
                     <td className="px-3 py-2 font-medium text-gray-700">{row.label}</td>
                     <td className="px-3 py-2 text-red-600 line-through">{row.before || <span className="italic text-gray-400">empty</span>}</td>
@@ -4612,6 +5325,95 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 items={piItems}
                 printedBy={piPreviewPrintedBy}
                 printedAt={piPreviewPrintedAt}
+              />
+            </PDFViewer>
+          </div>
+        </div>
+      )}
+
+      {/* ── DO PDF Preview Modal ─────────────────────────────── */}
+      {showDOPreview && (
+        <div className="fixed inset-0 z-[60] bg-gray-900 flex flex-col">
+          {/* Toolbar */}
+          <div className="flex-shrink-0 bg-gray-800 px-6 py-3 flex items-center justify-between shadow-lg">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-white font-medium text-sm">
+                Delivery Order Preview
+              </span>
+              <span className="text-gray-400 text-sm">— {mainData.do_no}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowDOPreview(false)}
+                className="px-4 py-1.5 border border-gray-500 rounded text-gray-300 hover:bg-gray-700 hover:text-white transition-colors text-sm"
+              >
+                Cancel
+              </button>
+              <PDFDownloadLink
+                document={
+                  <DeliveryOrderPDF
+                    doNo={mainData.do_no || ''}
+                    referenceNo={mainData.reference_no || ''}
+                    deliveryDate={mainData.delivery_date || ''}
+                    terms={mainData.terms || ''}
+                    remarks={mainData.remarks || ''}
+                    totalAmount={doItems.reduce((sum: number, item: any) => sum + (parseFloat(item.line_total) || 0), 0)}
+                    company={doPreviewCompany}
+                    customer={doCustomerInfo}
+                    items={doItems}
+                    printedBy={doPreviewPrintedBy}
+                    printedAt={doPreviewPrintedAt}
+                  />
+                }
+                fileName={`${mainData.do_no || 'delivery-order'}.pdf`}
+              >
+                {({ loading: pdfLoading }) => (
+                  <button
+                    className="px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
+                    disabled={pdfLoading}
+                  >
+                    {pdfLoading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Preparing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Download
+                      </>
+                    )}
+                  </button>
+                )}
+              </PDFDownloadLink>
+            </div>
+          </div>
+
+          {/* PDF Viewer */}
+          <div className="flex-1 overflow-hidden">
+            <PDFViewer width="100%" height="100%" style={{ border: 'none' }}>
+              <DeliveryOrderPDF
+                doNo={mainData.do_no || ''}
+                referenceNo={mainData.reference_no || ''}
+                deliveryDate={mainData.delivery_date || ''}
+                terms={mainData.terms || ''}
+                remarks={mainData.remarks || ''}
+                totalAmount={doItems.reduce((sum: number, item: any) => sum + (parseFloat(item.line_total) || 0), 0)}
+                company={doPreviewCompany}
+                customer={doCustomerInfo}
+                items={doItems}
+                printedBy={doPreviewPrintedBy}
+                printedAt={doPreviewPrintedAt}
               />
             </PDFViewer>
           </div>
