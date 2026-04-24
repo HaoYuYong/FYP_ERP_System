@@ -2,22 +2,22 @@ import { pool } from '../config/database';
 import { createLog, getTableId } from '../utils/logger';
 
 /**
- * Create a delivery order header with associated line items and logging.
+ * Create a sales invoice header with associated line items and logging.
  */
-export const createDeliveryOrder = async (
+export const createSalesInvoice = async (
   data: {
     reference_no?: string;
     terms?: string;
-    delivery_date?: string;
+    due_date?: string;
     customer_id?: number;
     remarks?: string;
-    pi_id?: string;
+    do_id?: string;
     items: Array<{
       item_id?: number;
       item_name: string;
       item_description: string;
       uom?: string;
-      do_quantity: number;
+      si_quantity: number;
       unit_price: number;
       discount: number;
       line_total: number;
@@ -30,28 +30,25 @@ export const createDeliveryOrder = async (
   try {
     await client.query('BEGIN');
 
-    // Safety check: if pi_id given, ensure PI is paid and not already linked.
-    if (data.pi_id) {
-      const piCheck = await client.query(
-        'SELECT status, generated_do_id FROM proforma_invoice WHERE pi_id = $1 FOR UPDATE',
-        [data.pi_id]
+    // Safety check: if do_id given, ensure DO has not already been used to generate an SI.
+    if (data.do_id) {
+      const doCheck = await client.query(
+        'SELECT generated_si_id FROM delivery_order WHERE do_id = $1 FOR UPDATE',
+        [data.do_id]
       );
-      if (!piCheck.rows[0]) {
-        throw new Error('Proforma invoice not found');
+      if (!doCheck.rows[0]) {
+        throw new Error('Delivery order not found');
       }
-      if (piCheck.rows[0].status !== 'paid') {
-        throw new Error('Proforma invoice must be in Paid status to generate a delivery order');
-      }
-      if (piCheck.rows[0].generated_do_id !== null) {
-        throw new Error('This proforma invoice has already been used to generate a delivery order');
+      if (doCheck.rows[0].generated_si_id !== null) {
+        throw new Error('This delivery order has already been used to generate a sales invoice');
       }
     }
 
-    // Get next DO number from sequence.
-    const doNoResult = await client.query(
-      "SELECT 'DO-' || LPAD(nextval('seq_do_no')::text, 6, '0') AS do_no"
+    // Get next SI number from sequence.
+    const siNoResult = await client.query(
+      "SELECT 'SI-' || LPAD(nextval('seq_si_no')::text, 6, '0') AS si_no"
     );
-    const doNo = doNoResult.rows[0].do_no;
+    const siNo = siNoResult.rows[0].si_no;
 
     // Snapshot customer details at creation time.
     let snapshotCompanyName = null;
@@ -82,23 +79,23 @@ export const createDeliveryOrder = async (
 
     const totalAmount = data.items.reduce((sum, item) => sum + (item.line_total || 0), 0);
 
-    const doQuery = `
-      INSERT INTO delivery_order (
-        do_no, reference_no, terms, delivery_date, customer_id, remarks, status, total_amount, created_by,
+    const siQuery = `
+      INSERT INTO sales_invoice (
+        si_no, reference_no, terms, due_date, customer_id, remarks, status, total_amount, created_by,
         customer_company_name, customer_register_no, customer_address, customer_phone, customer_email,
-        pi_id
+        do_id
       )
       VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8, $9, $10, $11, $12, $13, $14)
-      RETURNING do_id, do_no, reference_no, terms, delivery_date, customer_id, remarks, status, total_amount, created_by,
+      RETURNING si_id, si_no, reference_no, terms, due_date, customer_id, remarks, status, total_amount, created_by,
                 customer_company_name, customer_register_no, customer_address, customer_phone, customer_email,
-                pi_id
+                do_id
     `;
 
-    const doResult = await client.query(doQuery, [
-      doNo,
+    const siResult = await client.query(siQuery, [
+      siNo,
       data.reference_no || null,
       data.terms || null,
-      data.delivery_date || null,
+      data.due_date || null,
       data.customer_id || null,
       data.remarks || null,
       totalAmount,
@@ -108,74 +105,74 @@ export const createDeliveryOrder = async (
       snapshotAddress,
       snapshotPhone,
       snapshotEmail,
-      data.pi_id || null,
+      data.do_id || null,
     ]);
 
-    const deliveryOrder = doResult.rows[0];
+    const salesInvoice = siResult.rows[0];
 
-    // Log delivery order header creation.
-    const tableId = await getTableId('delivery_order');
-    const doLogId = await createLog({
+    // Log sales invoice header creation.
+    const tableId = await getTableId('sales_invoice');
+    const siLogId = await createLog({
       tableId,
-      recordId: deliveryOrder.do_id,
+      recordId: salesInvoice.si_id,
       actionType: 'INSERT',
       actionBy: userId,
       changedData: {
-        do_no: deliveryOrder.do_no,
+        si_no: salesInvoice.si_no,
         reference_no: data.reference_no,
         terms: data.terms,
-        delivery_date: data.delivery_date,
+        due_date: data.due_date,
         customer_id: data.customer_id,
         remarks: data.remarks,
         status: 'draft',
         total_amount: totalAmount,
-        pi_id: data.pi_id || null,
+        do_id: data.do_id || null,
       },
     });
 
     await client.query(
-      'UPDATE delivery_order SET log_id = $1 WHERE do_id = $2',
-      [doLogId, deliveryOrder.do_id]
+      'UPDATE sales_invoice SET log_id = $1 WHERE si_id = $2',
+      [siLogId, salesInvoice.si_id]
     );
 
     // Create line items.
     const items = [];
-    const itemTableId = await getTableId('delivery_order_item');
+    const itemTableId = await getTableId('sales_invoice_item');
 
     for (const item of data.items) {
-      const doiQuery = `
-        INSERT INTO delivery_order_item (do_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total)
+      const siiQuery = `
+        INSERT INTO sales_invoice_item (si_id, item_id, item_name, item_description, uom, si_quantity, unit_price, discount, line_total)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING doi_id, do_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total
+        RETURNING sii_id, si_id, item_id, item_name, item_description, uom, si_quantity, unit_price, discount, line_total
       `;
 
-      const doiResult = await client.query(doiQuery, [
-        deliveryOrder.do_id,
+      const siiResult = await client.query(siiQuery, [
+        salesInvoice.si_id,
         item.item_id || null,
         item.item_name,
         item.item_description,
         item.uom || null,
-        item.do_quantity,
+        item.si_quantity,
         item.unit_price,
         item.discount,
         item.line_total,
       ]);
 
-      const lineItem = doiResult.rows[0];
+      const lineItem = siiResult.rows[0];
       items.push(lineItem);
 
-      const doiLogId = await createLog({
+      const siiLogId = await createLog({
         tableId: itemTableId,
-        recordId: String(lineItem.doi_id),
+        recordId: String(lineItem.sii_id),
         actionType: 'INSERT',
         actionBy: userId,
         changedData: {
-          do_id: deliveryOrder.do_id,
+          si_id: salesInvoice.si_id,
           item_id: item.item_id,
           item_name: item.item_name,
           item_description: item.item_description,
           uom: item.uom,
-          do_quantity: item.do_quantity,
+          si_quantity: item.si_quantity,
           unit_price: item.unit_price,
           discount: item.discount,
           line_total: item.line_total,
@@ -183,21 +180,21 @@ export const createDeliveryOrder = async (
       });
 
       await client.query(
-        'UPDATE delivery_order_item SET log_id = $1 WHERE doi_id = $2',
-        [doiLogId, lineItem.doi_id]
+        'UPDATE sales_invoice_item SET log_id = $1 WHERE sii_id = $2',
+        [siiLogId, lineItem.sii_id]
       );
     }
 
-    // If generated from a PI, mark that PI as linked.
-    if (data.pi_id) {
+    // If generated from a DO, mark that DO as linked.
+    if (data.do_id) {
       await client.query(
-        'UPDATE proforma_invoice SET generated_do_id = $1 WHERE pi_id = $2',
-        [deliveryOrder.do_id, data.pi_id]
+        'UPDATE delivery_order SET generated_si_id = $1 WHERE do_id = $2',
+        [salesInvoice.si_id, data.do_id]
       );
     }
 
     await client.query('COMMIT');
-    return { ...deliveryOrder, log_id: doLogId, items };
+    return { ...salesInvoice, log_id: siLogId, items };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -207,54 +204,53 @@ export const createDeliveryOrder = async (
 };
 
 /**
- * Fetch all delivery orders with their associated line items.
+ * Fetch all sales invoices with their associated line items.
  */
-export const getDeliveryOrders = async () => {
+export const getSalesInvoices = async () => {
   try {
     const query = `
       SELECT
-        d.do_id,
-        d.do_no,
-        d.reference_no,
-        d.terms,
-        d.delivery_date,
-        d.customer_id,
-        d.pi_id,
-        d.generated_si_id,
-        d.remarks,
-        d.status,
-        d.total_amount,
-        d.created_by,
+        s.si_id,
+        s.si_no,
+        s.reference_no,
+        s.terms,
+        s.due_date,
+        s.customer_id,
+        s.do_id,
+        s.remarks,
+        s.status,
+        s.total_amount,
+        s.created_by,
         CONCAT(u.first_name, ' ', u.last_name) AS created_by_name,
         l.action_at AS created_at,
-        COALESCE(d.customer_company_name, c.company_name) AS customer_company_name,
-        d.customer_register_no,
-        d.customer_address,
-        d.customer_phone,
-        d.customer_email,
+        COALESCE(s.customer_company_name, c.company_name) AS customer_company_name,
+        s.customer_register_no,
+        s.customer_address,
+        s.customer_phone,
+        s.customer_email,
         json_agg(
           json_build_object(
-            'doi_id',           doi.doi_id,
-            'item_id',          doi.item_id,
-            'item_name',        doi.item_name,
-            'item_description', doi.item_description,
-            'uom',              doi.uom,
-            'do_quantity',      doi.do_quantity,
-            'unit_price',       doi.unit_price,
-            'discount',         doi.discount,
-            'line_total',       doi.line_total
-          ) ORDER BY doi.doi_id
-        ) FILTER (WHERE doi.doi_id IS NOT NULL) AS items
-      FROM delivery_order d
-      LEFT JOIN customer c ON d.customer_id = c.customer_id
-      LEFT JOIN delivery_order_item doi ON d.do_id = doi.do_id
-      LEFT JOIN users u ON d.created_by = u.auth_id
-      LEFT JOIN log l ON d.log_id = l.log_id
-      GROUP BY d.do_id, d.do_no, d.reference_no, d.terms, d.delivery_date, d.customer_id, d.pi_id,
-               d.generated_si_id, d.remarks, d.status, d.total_amount, d.created_by, u.first_name, u.last_name, l.action_at,
-               d.customer_company_name, c.company_name, d.customer_register_no,
-               d.customer_address, d.customer_phone, d.customer_email
-      ORDER BY d.do_no DESC
+            'sii_id',           sii.sii_id,
+            'item_id',          sii.item_id,
+            'item_name',        sii.item_name,
+            'item_description', sii.item_description,
+            'uom',              sii.uom,
+            'si_quantity',      sii.si_quantity,
+            'unit_price',       sii.unit_price,
+            'discount',         sii.discount,
+            'line_total',       sii.line_total
+          ) ORDER BY sii.sii_id
+        ) FILTER (WHERE sii.sii_id IS NOT NULL) AS items
+      FROM sales_invoice s
+      LEFT JOIN customer c ON s.customer_id = c.customer_id
+      LEFT JOIN sales_invoice_item sii ON s.si_id = sii.si_id
+      LEFT JOIN users u ON s.created_by = u.auth_id
+      LEFT JOIN log l ON s.log_id = l.log_id
+      GROUP BY s.si_id, s.si_no, s.reference_no, s.terms, s.due_date, s.customer_id, s.do_id,
+               s.remarks, s.status, s.total_amount, s.created_by, u.first_name, u.last_name, l.action_at,
+               s.customer_company_name, c.company_name, s.customer_register_no,
+               s.customer_address, s.customer_phone, s.customer_email
+      ORDER BY s.si_no DESC
     `;
 
     const result = await pool.query(query);
@@ -297,25 +293,25 @@ export const getInventoryItems = async () => {
 };
 
 /**
- * Update a delivery order header and its line items with audit logging.
+ * Update a sales invoice header and its line items with audit logging.
  */
-export const updateDeliveryOrder = async (
+export const updateSalesInvoice = async (
   data: {
-    do_id: string;
+    si_id: string;
     reference_no?: string;
     terms?: string;
-    delivery_date?: string | null;
+    due_date?: string | null;
     remarks?: string;
     status?: string;
     customer_id?: number | null;
     total_amount?: number;
     items?: Array<{
-      doi_id?: number;
+      sii_id?: number;
       item_id?: number | null;
       item_name: string;
       item_description: string;
       uom?: string;
-      do_quantity: number;
+      si_quantity: number;
       unit_price: number;
       discount: number;
       line_total: number;
@@ -327,17 +323,17 @@ export const updateDeliveryOrder = async (
   try {
     await client.query('BEGIN');
 
-    const oldDoResult = await client.query(
-      'SELECT * FROM delivery_order WHERE do_id = $1',
-      [data.do_id]
+    const oldSiResult = await client.query(
+      'SELECT * FROM sales_invoice WHERE si_id = $1',
+      [data.si_id]
     );
-    if (oldDoResult.rows.length === 0) throw new Error('Delivery order not found');
-    const oldDo = oldDoResult.rows[0];
+    if (oldSiResult.rows.length === 0) throw new Error('Sales invoice not found');
+    const oldSi = oldSiResult.rows[0];
 
     const headerFields: Record<string, any> = {};
     if (data.reference_no !== undefined) headerFields.reference_no = data.reference_no;
     if (data.terms !== undefined) headerFields.terms = data.terms;
-    if (data.delivery_date !== undefined) headerFields.delivery_date = data.delivery_date || null;
+    if (data.due_date !== undefined) headerFields.due_date = data.due_date || null;
     if (data.remarks !== undefined) headerFields.remarks = data.remarks;
     if (data.status !== undefined) headerFields.status = data.status;
     if (data.total_amount !== undefined) headerFields.total_amount = data.total_amount;
@@ -372,45 +368,45 @@ export const updateDeliveryOrder = async (
       }
     }
 
-    let updatedDo = oldDo;
+    let updatedSi = oldSi;
     if (Object.keys(headerFields).length > 0) {
       const keys = Object.keys(headerFields);
       const setClauses = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
       const updateResult = await client.query(
-        `UPDATE delivery_order SET ${setClauses} WHERE do_id = $1 RETURNING *`,
-        [data.do_id, ...Object.values(headerFields)]
+        `UPDATE sales_invoice SET ${setClauses} WHERE si_id = $1 RETURNING *`,
+        [data.si_id, ...Object.values(headerFields)]
       );
-      updatedDo = updateResult.rows[0];
+      updatedSi = updateResult.rows[0];
     }
 
-    const doTableId = await getTableId('delivery_order');
+    const siTableId = await getTableId('sales_invoice');
     await createLog({
-      tableId: doTableId,
-      recordId: data.do_id,
+      tableId: siTableId,
+      recordId: data.si_id,
       actionType: 'UPDATE',
       actionBy: userId,
-      changedData: { before: oldDo, after: updatedDo },
+      changedData: { before: oldSi, after: updatedSi },
     });
 
     if (data.items !== undefined) {
-      const itemTableId = await getTableId('delivery_order_item');
+      const itemTableId = await getTableId('sales_invoice_item');
 
       const existingResult = await client.query(
-        'SELECT doi_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total FROM delivery_order_item WHERE do_id = $1',
-        [data.do_id]
+        'SELECT sii_id, item_id, item_name, item_description, uom, si_quantity, unit_price, discount, line_total FROM sales_invoice_item WHERE si_id = $1',
+        [data.si_id]
       );
       const existingItems: any[] = existingResult.rows;
 
-      const keptDoiIds = new Set(
-        data.items.filter(i => i.doi_id).map(i => i.doi_id)
+      const keptSiiIds = new Set(
+        data.items.filter(i => i.sii_id).map(i => i.sii_id)
       );
 
       for (const existing of existingItems) {
-        if (!keptDoiIds.has(existing.doi_id)) {
-          await client.query('DELETE FROM delivery_order_item WHERE doi_id = $1', [existing.doi_id]);
+        if (!keptSiiIds.has(existing.sii_id)) {
+          await client.query('DELETE FROM sales_invoice_item WHERE sii_id = $1', [existing.sii_id]);
           await createLog({
             tableId: itemTableId,
-            recordId: String(existing.doi_id),
+            recordId: String(existing.sii_id),
             actionType: 'DELETE',
             actionBy: userId,
             changedData: { before: existing, after: null },
@@ -423,37 +419,37 @@ export const updateDeliveryOrder = async (
         const newItemName  = item.item_name;
         const newItemDesc  = item.item_description || item.item_name;
         const newUom       = item.uom || null;
-        const newQty       = item.do_quantity;
+        const newQty       = item.si_quantity;
         const newUnitPrice = item.unit_price;
         const newDiscount  = item.discount;
         const newLineTotal = item.line_total;
 
-        if (item.doi_id) {
-          const oldItem = existingItems.find(i => i.doi_id === item.doi_id);
+        if (item.sii_id) {
+          const oldItem = existingItems.find(i => i.sii_id === item.sii_id);
           if (!oldItem) continue;
 
           const itemChanged =
-            String(oldItem.item_id)           !== String(newItemId)   ||
-            oldItem.item_name                 !== newItemName          ||
-            oldItem.item_description          !== newItemDesc          ||
-            oldItem.uom                       !== newUom               ||
-            parseFloat(oldItem.do_quantity)  !== newQty               ||
-            parseFloat(oldItem.unit_price)    !== newUnitPrice         ||
-            parseFloat(oldItem.discount)      !== newDiscount          ||
-            parseFloat(oldItem.line_total)    !== newLineTotal;
+            String(oldItem.item_id)            !== String(newItemId)   ||
+            oldItem.item_name                  !== newItemName          ||
+            oldItem.item_description           !== newItemDesc          ||
+            oldItem.uom                        !== newUom               ||
+            parseFloat(oldItem.si_quantity)   !== newQty               ||
+            parseFloat(oldItem.unit_price)     !== newUnitPrice         ||
+            parseFloat(oldItem.discount)       !== newDiscount          ||
+            parseFloat(oldItem.line_total)     !== newLineTotal;
 
           const updatedItemResult = await client.query(`
-            UPDATE delivery_order_item
+            UPDATE sales_invoice_item
             SET item_id = $2, item_name = $3, item_description = $4, uom = $5,
-                do_quantity = $6, unit_price = $7, discount = $8, line_total = $9
-            WHERE doi_id = $1
-            RETURNING doi_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total
-          `, [item.doi_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
+                si_quantity = $6, unit_price = $7, discount = $8, line_total = $9
+            WHERE sii_id = $1
+            RETURNING sii_id, item_id, item_name, item_description, uom, si_quantity, unit_price, discount, line_total
+          `, [item.sii_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
 
           if (itemChanged) {
             await createLog({
               tableId: itemTableId,
-              recordId: String(item.doi_id),
+              recordId: String(item.sii_id),
               actionType: 'UPDATE',
               actionBy: userId,
               changedData: { before: oldItem, after: updatedItemResult.rows[0] },
@@ -461,39 +457,39 @@ export const updateDeliveryOrder = async (
           }
         } else {
           const insertResult = await client.query(`
-            INSERT INTO delivery_order_item (do_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total)
+            INSERT INTO sales_invoice_item (si_id, item_id, item_name, item_description, uom, si_quantity, unit_price, discount, line_total)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING doi_id, item_id, item_name, item_description, uom, do_quantity, unit_price, discount, line_total
-          `, [data.do_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
+            RETURNING sii_id, item_id, item_name, item_description, uom, si_quantity, unit_price, discount, line_total
+          `, [data.si_id, newItemId, newItemName, newItemDesc, newUom, newQty, newUnitPrice, newDiscount, newLineTotal]);
 
           const newItem = insertResult.rows[0];
-          const doiLogId = await createLog({
+          const siiLogId = await createLog({
             tableId: itemTableId,
-            recordId: String(newItem.doi_id),
+            recordId: String(newItem.sii_id),
             actionType: 'INSERT',
             actionBy: userId,
             changedData: {
-              do_id: data.do_id,
+              si_id: data.si_id,
               item_id: newItemId,
               item_name: newItemName,
               item_description: newItemDesc,
               uom: newUom,
-              do_quantity: newQty,
+              si_quantity: newQty,
               unit_price: newUnitPrice,
               discount: newDiscount,
               line_total: newLineTotal,
             },
           });
           await client.query(
-            'UPDATE delivery_order_item SET log_id = $1 WHERE doi_id = $2',
-            [doiLogId, newItem.doi_id]
+            'UPDATE sales_invoice_item SET log_id = $1 WHERE sii_id = $2',
+            [siiLogId, newItem.sii_id]
           );
         }
       }
     }
 
     await client.query('COMMIT');
-    return { do_id: data.do_id };
+    return { si_id: data.si_id };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

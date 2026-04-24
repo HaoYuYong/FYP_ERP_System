@@ -18,6 +18,7 @@ import companySettingsRoutes from './routes/company-settings';
 import quotationRoutes from './routes/quotation';
 import proformaInvoiceRoutes from './routes/proforma-invoice';
 import deliveryOrderRoutes from './routes/delivery-order';
+import salesInvoiceRoutes from './routes/sales-invoice';
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ app.use('/api/company-settings', companySettingsRoutes);
 app.use('/api/quotation', quotationRoutes);
 app.use('/api/proforma-invoice', proformaInvoiceRoutes);
 app.use('/api/delivery-order', deliveryOrderRoutes);
+app.use('/api/sales-invoice', salesInvoiceRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
