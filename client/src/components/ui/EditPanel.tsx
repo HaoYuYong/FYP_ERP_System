@@ -34,6 +34,7 @@ import { PDFViewer, PDFDownloadLink } from '@react-pdf/renderer';
 import PurchaseRequestPDF from '../pdf/PurchaseRequestPDF';
 import PurchaseOrderPDF from '../pdf/PurchaseOrderPDF';
 import QuotationPDF from '../pdf/QuotationPDF';
+import ProformaInvoicePDF from '../pdf/ProformaInvoicePDF';
 import { apiGetCompanySettings } from '../../lib/companySettingsApi';
 
 // ==============================================
@@ -186,6 +187,13 @@ const EditPanel: React.FC<EditPanelProps> = ({
   const [quotPreviewPrintedBy, setQuotPreviewPrintedBy] = useState('');
   const [quotPreviewPrintedAt, setQuotPreviewPrintedAt] = useState<Date>(new Date());
   const [loadingQuotPreview, setLoadingQuotPreview] = useState(false);
+
+  // PI PDF preview state
+  const [showPIPreview, setShowPIPreview] = useState(false);
+  const [piPreviewCompany, setPiPreviewCompany] = useState<any>(null);
+  const [piPreviewPrintedBy, setPiPreviewPrintedBy] = useState('');
+  const [piPreviewPrintedAt, setPiPreviewPrintedAt] = useState<Date>(new Date());
+  const [loadingPIPreview, setLoadingPIPreview] = useState(false);
 
   // ==============================================
   // PROFORMA INVOICE EDITING STATE
@@ -1515,6 +1523,38 @@ const EditPanel: React.FC<EditPanelProps> = ({
       setShowPOPreview(true);
     } finally {
       setLoadingPOPreview(false);
+    }
+  };
+
+  // ==============================================
+  // PI PDF PREVIEW HANDLER
+  // ==============================================
+
+  const handleOpenPIPreview = async () => {
+    setLoadingPIPreview(true);
+    try {
+      const [settingsResult, { data: authData }] = await Promise.all([
+        apiGetCompanySettings(),
+        supabase.auth.getUser(),
+      ]);
+      setPiPreviewCompany(settingsResult.success ? settingsResult.data : {});
+      const user = authData?.user;
+      const name =
+        user?.user_metadata?.full_name ||
+        user?.user_metadata?.name ||
+        user?.email ||
+        data?.created_by_name ||
+        'Unknown User';
+      setPiPreviewPrintedBy(name);
+      setPiPreviewPrintedAt(new Date());
+      setShowPIPreview(true);
+    } catch {
+      setPiPreviewCompany({});
+      setPiPreviewPrintedBy(data?.created_by_name || 'Unknown User');
+      setPiPreviewPrintedAt(new Date());
+      setShowPIPreview(true);
+    } finally {
+      setLoadingPIPreview(false);
     }
   };
 
@@ -4009,6 +4049,31 @@ const EditPanel: React.FC<EditPanelProps> = ({
               )}
             </button>
           )}
+          {isProformaInvoice && (
+            <button
+              onClick={handleOpenPIPreview}
+              disabled={loadingPIPreview || loading}
+              className="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:opacity-50 transition-colors flex items-center gap-1"
+            >
+              {loadingPIPreview ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  Preview
+                </>
+              )}
+            </button>
+          )}
           <button
             onClick={poReceivingMode ? handleCancelReceiving : poUpdateAgainMode ? () => setPoUpdateAgainMode(false) : onClose}
             className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
@@ -4460,6 +4525,93 @@ const EditPanel: React.FC<EditPanelProps> = ({
                 items={quotItems}
                 printedBy={quotPreviewPrintedBy}
                 printedAt={quotPreviewPrintedAt}
+              />
+            </PDFViewer>
+          </div>
+        </div>
+      )}
+
+      {/* ── PI PDF Preview Modal ─────────────────────────────── */}
+      {showPIPreview && (
+        <div className="fixed inset-0 z-[60] bg-gray-900 flex flex-col">
+          {/* Toolbar */}
+          <div className="flex-shrink-0 bg-gray-800 px-6 py-3 flex items-center justify-between shadow-lg">
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-white font-medium text-sm">
+                Proforma Invoice Preview
+              </span>
+              <span className="text-gray-400 text-sm">— {mainData.pi_no}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowPIPreview(false)}
+                className="px-4 py-1.5 border border-gray-500 rounded text-gray-300 hover:bg-gray-700 hover:text-white transition-colors text-sm"
+              >
+                Cancel
+              </button>
+              <PDFDownloadLink
+                document={
+                  <ProformaInvoicePDF
+                    piNo={mainData.pi_no || ''}
+                    referenceNo={mainData.reference_no || ''}
+                    terms={mainData.terms || ''}
+                    remarks={mainData.remarks || ''}
+                    totalAmount={mainData.total_amount ?? 0}
+                    company={piPreviewCompany}
+                    customer={piCustomerInfo}
+                    items={piItems}
+                    printedBy={piPreviewPrintedBy}
+                    printedAt={piPreviewPrintedAt}
+                  />
+                }
+                fileName={`${mainData.pi_no || 'proforma-invoice'}.pdf`}
+              >
+                {({ loading: pdfLoading }) => (
+                  <button
+                    className="px-4 py-1.5 bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors text-sm flex items-center gap-2 disabled:opacity-50"
+                    disabled={pdfLoading}
+                  >
+                    {pdfLoading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Preparing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Download
+                      </>
+                    )}
+                  </button>
+                )}
+              </PDFDownloadLink>
+            </div>
+          </div>
+
+          {/* PDF Viewer */}
+          <div className="flex-1 overflow-hidden">
+            <PDFViewer width="100%" height="100%" style={{ border: 'none' }}>
+              <ProformaInvoicePDF
+                piNo={mainData.pi_no || ''}
+                referenceNo={mainData.reference_no || ''}
+                terms={mainData.terms || ''}
+                remarks={mainData.remarks || ''}
+                totalAmount={mainData.total_amount ?? 0}
+                company={piPreviewCompany}
+                customer={piCustomerInfo}
+                items={piItems}
+                printedBy={piPreviewPrintedBy}
+                printedAt={piPreviewPrintedAt}
               />
             </PDFViewer>
           </div>
